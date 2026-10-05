@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+secrets/*
+!secrets/README.txt
+.tmp/
+data/*
+!data/.gitkeep
+reports/*
+!reports/.gitkeep
+.env
+.env.*
