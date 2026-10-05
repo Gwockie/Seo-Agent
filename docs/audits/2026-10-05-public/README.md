@@ -15,3 +15,5 @@ The original outputs remain under ignored reports/public-audit-20261005T204139Z/
 Keep this dated baseline unchanged when collecting new account evidence. Put raw OAuth/Search Console data and detailed supplemented reports in their existing ignored locations. A future Git-tracked supplement must be intentionally public-safe and contain no private account metrics or identifying account details by default.
 
 No website changes have been approved or applied. Production writes remain prohibited; remote staging transfers remain disabled. Keeping SiteGround StartUp and deferring the upgrade remain the owner's decisions. This documentation is not a deployment package.
+
+Use [the OAuth and Search Console supplement handoff](../../../prompts/gsc-oauth-supplement.md) for the next agent. It guides local credential setup, human Google consent, exact-property selection and completion of the private evidence-backed supplement.
