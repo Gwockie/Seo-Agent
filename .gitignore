@@ -7,7 +7,6 @@ secrets/*
 .tmp/
 data/*
 !data/.gitkeep
-reports/*
-!reports/.gitkeep
+reports/
 .env
 .env.*
