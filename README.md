@@ -41,6 +41,15 @@ Raw Search Console exports and downloaded page evidence under `data/`, OAuth
 credentials/tokens, temporary files, and `.venv` also remain local and ignored.
 Collect your own authorized snapshot after cloning the project.
 
+## Follow-up investigations and local SEO drafting
+
+The [October 5 public-safe follow-up](docs/audits/2026-10-05-followup/README.md)
+records qualitative indexing/service-SEO conclusions and links to two ready-to-use
+agent task prompts. Private account exports and detailed supplemented reports remain
+ignored; their absence in another checkout is expected. The original dated public
+audit is preserved. These prompts authorize read-only investigation and local drafts,
+not website implementation or Search Console mutations.
+
 ## 1. Create the Google Cloud OAuth credential
 
 In Google Cloud:
