@@ -32,7 +32,12 @@ Primary outcomes:
 
 THIS REPOSITORY IS READ ONLY WITH RESPECT TO EXTERNAL SYSTEMS BY DEFAULT.
 
-The user permits website updates only after EXPLICIT APPROVAL of the exact actions.
+NEVER write, modify, or inject code directly into production. All implementation
+must target local source files or a verified SiteGround Staging installation.
+This repository has no production deployment path. Do not use SiteGround's
+Push to Live, Full Deploy, or Custom Deploy controls.
+
+The user permits STAGING website updates only after EXPLICIT APPROVAL of the exact actions.
 Preparing local drafts, plans, and read-only evidence does not authorize implementation.
 Before any website write, show the affected URL/setting, current and proposed values,
 the intended action, factual confirmations, validation, and rollback plan. Then wait
@@ -144,3 +149,41 @@ For content changes, show:
 
 Do not apply proposed edits until the user explicitly approves the exact actions
 under the safety boundary above.
+
+## Local implementation workspace
+
+Current owner decision: keep the reported SiteGround StartUp plan and defer the
+quoted $13/month upgrade. Prioritize read-only SEO evidence and local source
+preparation; paid staging is not a prerequisite for auditing or drafting code.
+Use `docs/LOCAL_DEVELOPMENT.md` for the active workflow. Remote staging setup,
+credentials and release packaging are deferred until the owner chooses that route.
+Reconsider a hosting upgrade only with measured server/resource constraints or
+recurring staging work whose time savings justify the cost. Do not purchase a plan,
+install a production staging plugin, or create a clone in the production root.
+Local WordPress runtime, sanitized exports and backups belong under ignored `local/`.
+Local clone tests must prevent connections to production databases and live
+email/form/booking integrations. Source drafting does not require a full clone.
+
+Keep the existing `seo_agent/`, `data/`, and `reports/` audit workflow intact.
+Use `LOCAL_SEO_ROADMAP.md` for milestones and `docs/STAGING_SETUP.md` for setup.
+For local implementation tasks, read the corresponding prompt hook:
+
+- Schema: `prompts/schema.md` and `src/schema/README.md`.
+- Performance: `prompts/performance.md` and `src/optimization/README.md`.
+- Page templates: `prompts/templates.md` and `src/templates/README.md`.
+- Release preparation: `prompts/staging-review.md` and `deploy/README.md`.
+
+These are project task instructions, not background automations or permissions.
+No specialized SEO skill was present in this repository at initial setup.
+Reuse the existing GSC/crawl diagnostics as evidence. Do not install a plugin or
+broaden account access just to add SEO tooling.
+
+Only explicitly mapped `src/` files may enter a release. Never sync the whole
+repository, WordPress installation, uploads, secrets, reports, or databases.
+Theme integration must follow a read-only inspection of the actual active theme.
+Prefer an existing child theme; never overwrite a vendor/parent theme by default.
+The staging preparation tool is local-only. Its output is not human approval.
+Before a transfer, verify canonical remote paths, symlinks, current file hashes,
+staging URL/database separation, backup, validation, and rollback. Unknowns block
+remote writes. Approval covers only the reviewed manifest and exact actions;
+changed bytes, targets, or settings require a newly reviewed batch.

@@ -2,9 +2,34 @@
 
 A local SEO audit project that pulls live Google Search Console data and crawls a public WordPress site.
 
-The Python auditing tool does **not** modify WordPress. Agents may implement website
+The Python auditing tool does **not** modify WordPress. Agents may implement staging website
 changes only after explicit human approval of the exact actions, as defined in
 [AGENTS.md](AGENTS.md). Search Console access remains read-only.
+Production writes are prohibited in this project.
+
+## Current workflow: keep StartUp and develop locally
+
+The owner chose to defer the quoted $13/month hosting upgrade. Begin with a read-only
+SEO audit and local source drafts. Paid staging and SiteGround credentials are not
+required for these tasks. See [the local development guide](docs/LOCAL_DEVELOPMENT.md).
+Local WordPress runtime, sanitized exports and backups remain ignored under `local/`.
+No local WordPress clone has been installed yet.
+
+## Local development and deferred staging blueprint
+
+The audit package remains in `seo_agent/`. Proposed website code belongs in
+`src/schema/`, `src/optimization/`, `src/templates/`, and `src/theme/`.
+Start with [LOCAL_SEO_ROADMAP.md](LOCAL_SEO_ROADMAP.md) and the local development guide.
+The [staging setup walkthrough](docs/STAGING_SETUP.md) is retained for a future
+owner-selected remote staging route; it is not the next required step.
+
+`scripts/prepare_staging.py` validates an explicit file map and creates a local
+release with hashes and an approval review template. It never connects to a server.
+`deploy/Upload-Staging.ps1.example` is a deliberately disabled transfer placeholder.
+There are no upload-on-save hooks, deployment-on-push actions, or production targets.
+Read [deploy/README.md](deploy/README.md) for the release gates.
+Revisit hosting only if measurements show a server bottleneck or regular staging
+work makes the additional cost worthwhile.
 
 ## Local audit outputs
 

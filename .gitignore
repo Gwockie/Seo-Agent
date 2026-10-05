@@ -10,3 +10,13 @@ data/*
 reports/
 .env
 .env.*
+!.env.staging.example
+dist/
+deploy/staging.local.json
+deploy/baseline/
+*.pem
+*.ppk
+*.key
+known_hosts*
+local/*
+!local/README.md

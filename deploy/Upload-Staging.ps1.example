@@ -1,0 +1,40 @@
+# Disabled deployment placeholder. This file intentionally performs NO network calls.
+# A local release or this setup request is not approval to write to staging.
+# Before implementing a transfer, complete docs/STAGING_SETUP.md and obtain human
+# approval of the exact manifest, current/proposed values, settings, and rollback.
+
+[CmdletBinding()]
+param([Parameter(Mandatory = $true)][string]$ReleaseDirectory)
+
+$ErrorActionPreference = 'Stop'
+throw 'Staging transfer is disabled. Verify the installation and obtain approval of an exact release before implementing this placeholder.'
+
+# Future approved transfer implementation MUST:
+# 1. Read the reviewed manifest.json from ReleaseDirectory; verify its SHA-256 and
+#    EVERY payload file hash. Require explicit human approval of that same hash.
+# 2. Read SG_STAGING_SFTP_HOST, SG_STAGING_USER, SG_STAGING_PORT,
+#    SG_STAGING_SSH_KEY_PATH, SG_STAGING_KNOWN_HOSTS_PATH from the process environment.
+#    Never echo private key contents/passphrases. No production credential variables.
+# 3. Use OpenSSH key authentication, StrictHostKeyChecking=yes, IdentitiesOnly=yes,
+#    ForwardAgent=no, a pinned UserKnownHostsFile, and explicit Port/IdentityFile.
+#    Do not use plaintext FTP, AutoAddPolicy, accept-new, or disable host verification.
+# 4. Read-only preflight: realpath staging/prod roots and every destination parent;
+#    reject aliases, symlink escapes, shared inodes/hard links and overlapping roots.
+#    Confirm the staging hostname, separate staging DB and active child theme.
+#    Recheck current hashes against the reviewed manifest before ANY remote write.
+# 5. Download backups locally to ignored deploy/baseline/<release>/ and verify hashes.
+#    Require a staging-only backup/restore route (never a whole live-site restore).
+# 6. Build a batch containing ONLY approved absolute theme file destinations.
+#    Any remote mkdir/temp file/rename must appear in the approved action list.
+#    No recursive sync, delete, --delete, database import, theme activation or WP core updates.
+# 7. Upload only the approved payload, fail on the first error, verify remote hashes,
+#    and record a receipt. Multi-file SFTP is not an atomic transaction; record progress.
+# 8. Re-run staging page/schema/mobile/form smoke checks. A rollback is also a write:
+#    restore only approved backups or request exact approval for an unapproved recovery.
+# 9. Never invoke SiteGround Push to Live, Full Deploy, or Custom Deploy.
+
+# Transport command shape for a future reviewed batch (NOT an executable uploader):
+# & sftp -P $env:SG_STAGING_PORT -i $env:SG_STAGING_SSH_KEY_PATH `
+#   -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o ForwardAgent=no `
+#   -o "UserKnownHostsFile=$env:SG_STAGING_KNOWN_HOSTS_PATH" `
+#   -b $ReviewedBatchPath "$($env:SG_STAGING_USER)@$($env:SG_STAGING_SFTP_HOST)"

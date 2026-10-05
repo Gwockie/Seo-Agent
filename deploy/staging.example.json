@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "environment": "staging",
+  "remote_writes_enabled": false,
+  "staging_site_url": "${SG_STAGING_SITE_URL}",
+  "production_site_url": "${SG_PRODUCTION_SITE_URL}",
+  "staging_wp_root": "${SG_STAGING_WP_ROOT}",
+  "production_wp_root": "${SG_PRODUCTION_WP_ROOT}",
+  "theme_slug": "${SG_STAGING_THEME_SLUG}",
+  "theme_dir": "${SG_STAGING_THEME_DIR}",
+  "files": []
+}
