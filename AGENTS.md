@@ -1,7 +1,8 @@
 # Local SEO Agent Instructions
 
 You are working on a local SEO auditing system for a mental-health practice. Auditing
-is read-only; website implementation requires explicit user approval.
+is read-only except for the conditional Search Console recovery authorization below;
+website implementation requires explicit user approval.
 
 ## Core objective
 
@@ -60,12 +61,94 @@ Without that specific approval, do not:
 - install plugins
 - create mass location pages
 
-Search Console remains read-only: do not alter properties, submit/delete sitemaps,
-or request indexing. Do not broaden OAuth scopes. Never fabricate credentials,
-testimonials, reviews, clinical claims, or statistics. Do not create mass location pages.
+Search Console is read-only by default. The conditional indexing-recovery
+exception below permits only the enumerated browser actions after the owner has
+approved the sitemap as a whole. Do not alter properties, verification, permissions,
+removals, or validation controls; do not delete sitemaps or broaden OAuth scopes.
+Never fabricate credentials, testimonials, reviews, clinical claims, or statistics.
+Do not create mass location pages.
 
 The Search Console OAuth scope must remain:
 `https://www.googleapis.com/auth/webmasters.readonly`
+
+## Conditional indexing-recovery authorization (owner decision, October 6, 2026)
+
+The owner authorized a follow-up investigation to identify the indexing problem and
+recommend a fix, with this condition: "ensure that we LIKE the sitemap as a whole
+before submitting/requesting indexing." This section implements that decision.
+It supersedes older blanket bans on live sitemap tests, sitemap submissions and
+indexing requests only within the scope defined here. Historical audit prompts
+and reports remain evidence of what was authorized and performed at their dates.
+
+Authorized immediately:
+
+- Reuse preserved evidence and perform bounded read-only tests answering genuinely
+  new questions, including Google's current fetch of the actual sitemap index and
+  relevant children through Search Console's Test Live URL.
+
+- Inventory the entire generated sitemap hierarchy and every listed URL; evaluate
+  intended inclusion/exclusion, canonical/index policy and technical validity.
+
+- Inspect actual generators/settings/source read-only, and prepare local sitemap
+  manifests, proposed changes, diagnostic results and exact remediation drafts.
+
+- Continue independent investigation without waiting for optional owner input.
+  Keep production content, performance, hosting, security and configuration intact.
+
+Sitemap review is a required human gate before ANY sitemap submission/resubmission
+or indexing request, including a direct page-child submission:
+
+1. Save the complete current index/child/URL inventory, raw evidence hashes and an
+   intended inclusion/exclusion manifest with reasons. Review the whole hierarchy,
+   not just the two therapy entries. Include posts, pages, layouts, category and
+   local/KML resources where actually present. Flag missing desired landings,
+   duplicates, redirects, excluded layouts, unresolved archive/resource purpose,
+   invalid XML and fetch errors.
+2. Present a readable whole-sitemap review, all proposed differences, remaining
+   issues and the exact proposed Search Console batch. Record the property, full
+   URLs, current versus intended state, validation and effects of each action.
+3. Obtain the owner's explicit approval of that specific whole-sitemap version
+   and enumerated batch. This instruction is NOT approval of the current sitemap.
+   An agent's assessment, silence, elapsed time, or approval of one child is not
+   owner approval of the whole sitemap. Combine sitemap and action approval
+   in one review; once both are explicitly covered, proceed without asking again.
+4. Verify the approved semantic URL/inclusion manifest matches the currently served
+   sitemap and that relevant live fetches succeed. Approval of a proposed local
+   sitemap does not authorize publishing it. If website changes are needed, retain
+   the website safety boundary and do not submit until the approved sitemap is
+   actually served. Material URL, child, role or index-policy changes require renewed
+   review; routine verified lastmod changes alone do not change the semantic manifest.
+   Do not bypass this gate by submitting only page-sitemap.xml or requesting a page.
+
+After this gate, the approved one-time recovery batch may contain only:
+
+- Submit or resubmit https://meadowandmindpsychology.com/sitemap_index.xml once.
+
+- Submit https://meadowandmindpsychology.com/page-sitemap.xml directly once, only
+  when justified by the investigation and explicitly included in the approved batch.
+
+- Request indexing once each for these exact preferred service URLs, only when
+  explicitly included in the approved batch and still warranted by their status:
+  https://meadowandmindpsychology.com/individual-therapy/
+  https://meadowandmindpsychology.com/affordable-therapy-pennsylvania/
+
+Use the existing authenticated owner/full-user browser session for approved
+Search Console actions; the repository's API token remains read-only. Verify the
+actual property/account before each action. Choose the smallest justified batch;
+do not automatically perform every permitted action. Log UTC, exact target,
+approval reference, action, UI acknowledgement and subsequent read-only observations.
+Do not repeat requests or expand the URL list. Record that crawl/indexing requests
+are asynchronous, cannot be undone by a rollback click, and do not guarantee indexing.
+Do not delete submissions or change the website to simulate a rollback.
+
+This exception does not authorize WordPress/Elementor edits or autosaves, sitemap
+generator/settings changes, publishing, deployment, redirects, DNS, new properties,
+permissions, Validate fix, robots recrawl requests, cache purges, security changes,
+paid plans or plugins. Production writes remain prohibited. Future staging writes
+still require exact approval under the existing boundary. Local proposals are allowed.
+Google feedback/support/community messages remain unsent unless the human explicitly
+authorizes the exact outbound message. Do not dispatch agents/chats or create
+automations merely to perform or monitor this follow-up.
 
 ## How to collect a live snapshot
 
