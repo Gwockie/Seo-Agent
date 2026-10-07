@@ -6,6 +6,16 @@ The Python auditing tool does **not** modify WordPress. Agents may implement web
 changes only after explicit human approval of the exact actions, as defined in
 [AGENTS.md](AGENTS.md). Search Console access remains read-only.
 
+## Planned multi-site app
+
+The next step is a lightweight local Streamlit app with secure Google connections,
+separate site workspaces, configurable industry rules, recommendations and reporting.
+The app is planned; the current implementation remains the CLI auditor.
+
+- [Implementation plan](docs/lightweight-multi-site-app-plan.md)
+- [Library and skill recommendations](docs/libraries-and-skills-recommendation.md)
+- [Implementation agent prompt and session settings](docs/implementation-agent-prompt.md)
+
 ## Local audit outputs
 
 Audit reports and implementation handoff prompts live under `reports/` and remain
