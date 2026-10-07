@@ -31,6 +31,23 @@ Read [deploy/README.md](deploy/README.md) for the release gates.
 Revisit hosting only if measurements show a server bottleneck or regular staging
 work makes the additional cost worthwhile.
 
+## Critical service indexing checks
+
+Use the bounded read-only check after relevant site changes and during recovery:
+
+```powershell
+.\.venv\Scripts\python.exe -m seo_agent.indexing_health --live --out data\indexing-health-YYYYMMDDTHHMMSSZ
+```
+
+It checks the two therapy services and indexed assessment control using ordinary
+Google index records. It fails on unknown/excluded state, canonical drift or missing
+crawl evidence; it never submits requests or changes the website. Add `--previous`
+with a prior `health.json` to detect regressions. Use a new output directory each run.
+See [the indexing health guide](docs/INDEXING_HEALTH.md) for sitemap checks, exit
+codes, recovery acceptance and follow-up observations. No recurring job is installed.
+The [October 6 recovery summary](docs/audits/2026-10-06-indexing-recovery/README.md)
+records the verified outcome and completed one-time requests without private exports.
+
 ## Local audit outputs
 
 Audit reports and implementation handoff prompts live under `reports/` and remain

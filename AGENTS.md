@@ -150,6 +150,18 @@ Google feedback/support/community messages remain unsent unless the human explic
 authorizes the exact outbound message. Do not dispatch agents/chats or create
 automations merely to perform or monitor this follow-up.
 
+## Completed recovery record (October 6, 2026)
+
+The owner explicitly approved current-served-r2, the entire existing sitemap with
+disclosed hygiene exceptions, and one Request indexing for each of the two exact
+therapy URLs above. Both requests were performed once, and both preferred URLs
+were subsequently verified indexed with ordinary crawl/canonical evidence.
+See docs/audits/2026-10-06-indexing-recovery/README.md for the public-safe outcome.
+These completed requests consume that approved one-time batch; do not repeat them.
+No sitemap submission or website change occurred. The original mechanism remains
+unproved. Future regressions require fresh bounded evidence and the existing exact
+approval gates for any new external action. No recurring monitor has been enabled.
+
 ## How to collect a live snapshot
 
 1. Install dependencies.

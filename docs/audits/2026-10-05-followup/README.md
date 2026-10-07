@@ -1,5 +1,10 @@
 # October 5 follow-up: indexing and service SEO
 
+> Dated update: both preferred therapy URLs were verified indexed during the
+> [October 6 recovery](../2026-10-06-indexing-recovery/README.md). The findings and
+> permission descriptions below preserve the October 5 handoff; use current
+> AGENTS.md for active authorization and do not repeat the completed requests.
+
 This public-safe handoff supplements the unchanged [public audit baseline](../2026-10-05-public/README.md). The owner requested a Git-committed handoff and two follow-up agent prompts. This document intentionally excludes account performance metrics, account identity, credentials and raw Search Console exports.
 
 ## Completed evidence collection

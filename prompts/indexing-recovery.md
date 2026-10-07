@@ -1,5 +1,15 @@
 # Continue indexing diagnosis: review the whole sitemap before recovery
 
+> Completion notice, October 6, 2026: the whole existing sitemap was reviewed and
+> approved as current-served-r2 for a bounded batch of one indexing request per
+> therapy URL. Both requests were performed once; subsequent ordinary API/browser
+> records verified both preferred URLs indexed with successful crawls and matching
+> canonicals. See [the public-safe recovery summary](../docs/audits/2026-10-06-indexing-recovery/README.md)
+> and AGENTS.md's completed recovery record. Do not rerun the completed batch or
+> treat the pre-intervention unknown statuses below as a current failure. For a
+> future regression, use the read-only health check and a named new diagnostic
+> question under the current authorization gates. Raw evidence remains ignored.
+
 Work in C:\Users\keyse\.codex\worktrees\6550\local-seo-agent.
 Practice: https://meadowandmindpsychology.com/
 Existing verified Search Console URL-prefix property:
