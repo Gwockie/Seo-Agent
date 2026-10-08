@@ -7,6 +7,10 @@ are numbered 1–20; each artifact is created exclusively. Earlier captures must
 remain unchanged. The newest revision is initially shown, with older revisions
 available in the app. Backups and audit packets include these known artifacts.
 
+Read and write capture JSON explicitly as UTF-8. Windows' default text encoding
+can corrupt punctuation before rendering. If a saved supplement needs correction,
+prepare a new revision from the original capture and preserve earlier revisions.
+
 A bundle has `schema: 1`, matching `site_id`/`audit_id`, a validated site `appearance`,
 a bounded map of public image URLs to local raster data URIs, and 1–6 `pages`.
 Each page contains its exact public URL/title, UTC capture date, viewport width,
