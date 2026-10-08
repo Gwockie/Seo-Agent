@@ -65,6 +65,17 @@ metrics. Final web data uses Pacific reporting dates with a three-day default la
 Missing query rows do not prove zero demand. Qualified inquiries and map-pack
 rankings are not supplied. Change dates do not prove causality.
 
+Read-only setup diagnostics create no workspace/database and never refresh tokens:
+
+```powershell
+.\.venv-mvp\Scripts\python.exe -m seo_agent setup-check
+.\.venv-mvp\Scripts\python.exe -m seo_agent storage-check --path secrets
+```
+
+Opening the live app stops before creating private files when protection fails.
+Checks cover existing descendants, not just the parent directory. See the
+[follow-up validation and operator handoff](docs/mvp-live-audit-follow-up.md).
+
 For configured sites:
 
 ```powershell

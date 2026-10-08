@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import zipfile
 from pathlib import Path
 
@@ -14,6 +15,20 @@ from .storage import Store
 MAX_IMPORT = 2 * 1024 * 1024
 PHRASE_FIELDS = ["site_id", "phrase", "group", "related_terms", "location", "priority", "landing_page", "active"]
 DATA_FILES = {"manifest.json", "gsc_sitemaps.json", "crawl.csv", "opportunities.csv", "url_inspection.csv", "gsc_window.csv", *{"gsc_" + n + ".csv" for n in ("totals", "query_page", "queries", "pages", "daily", "device", "country")}}
+
+
+def backup_evidence_path(relative, kind):
+    """Allow known evidence formats, including inert historical page captures."""
+    parts = relative.parts
+    if len(parts) not in (1, 2) or any(v in relative.name.casefold() for v in ("token", "secret", "credential")) or not re.fullmatch(r"[a-zA-Z0-9_.-]+", relative.name):
+        return False
+    if kind == "reports":
+        return len(parts) == 1 and relative.suffix == ".md"
+    if kind != "data":
+        return False
+    if len(parts) == 2:
+        return (parts[0] == "comparison" and relative.name in DATA_FILES) or (parts[0] == "pages" and relative.suffix in {".html", ".txt"})
+    return relative.name in DATA_FILES | {"validation.json", "robots.txt"} or relative.suffix in {".html", ".txt", ".xml"}
 
 
 def spreadsheet_safe(value):
@@ -74,10 +89,17 @@ def import_phrases(raw: bytes, sid, config, *, associate=False):
 
 
 def register_legacy(store, sid, data_path, reports_path, *, associate=False):
+    store.require_private_write()
     data, reports = Path(data_path).resolve(), Path(reports_path).resolve()
     # Validate locations before reading any imported manifest.
     if not data.is_relative_to(store.legacy_root / "data") or not reports.is_relative_to(store.legacy_root / "reports"):
         raise ValueError("Historical folders must be under the legacy data/reports roots")
+    if data.parent != store.legacy_root / "data" or reports.parent != store.legacy_root / "reports" or data.name != reports.name:
+        raise ValueError("Historical data/reports must be the matching snapshot pair")
+    if store.enforce_protection:
+        from .protection import require_protected
+        require_protected(data)
+        require_protected(reports)
     config = store.site(sid)
     path = data / "manifest.json"
     if not path.resolve().is_relative_to(data) or not path.exists() or path.stat().st_size > MAX_IMPORT:
@@ -100,7 +122,8 @@ def register_legacy(store, sid, data_path, reports_path, *, associate=False):
     aid = store.create_audit(sid, legacy_paths=(data, reports), created=manifest.get("created_utc"))
     # Metadata only; never write to original files or pretend narrative is automated.
     with store.db() as db:
-        db.execute("UPDATE audits SET manifest=?, status=? WHERE id=? AND site_id=?", (json.dumps({"legacy": True, "source": manifest, "gsc_available": bool(prop), "note": "Historical rule versions unknown; imported narrative is human-authored."}), "legacy" if prop else "legacy-public-only", aid, sid))
+        unknown_rules = {"registry_version": "unknown", "industry": config.industry, "profile_version": "unknown", "rules": {}, "note": "Original rule versions and configuration were not recorded. Current selected profile is an association for viewing, not historical provenance."}
+        db.execute("UPDATE audits SET manifest=?, resolved=?, status=? WHERE id=? AND site_id=?", (json.dumps({"legacy": True, "source": manifest, "gsc_available": bool(prop), "note": "Historical rules/configuration unknown; imported narrative is human-authored. Selected profile is an association only."}), json.dumps(unknown_rules), "legacy" if prop else "legacy-public-only", aid, sid))
     return aid
 
 

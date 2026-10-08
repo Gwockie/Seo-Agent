@@ -3,6 +3,10 @@
 Completed October 7, 2026. Scope: local application only. No website, CMS, DNS,
 Search Console property/sitemap mutation, deployment or indexing request was made.
 
+This records the initial MVP worktree. See
+[live-audit follow-up](mvp-live-audit-follow-up.md) for the primary checkout's
+subsequent local fixes, validation, discovered assets and remaining prerequisites.
+
 ## Implemented
 
 - Shared CLI/UI audit runner; explicit site/connection/output context, one global

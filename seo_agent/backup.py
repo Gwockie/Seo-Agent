@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 from .protection import require_protected
 from .storage import Store, child_path, checked_id, config_hash, private_location
 from .config import SiteConfig
-from .import_export import DATA_FILES
+from .import_export import backup_evidence_path
 
 MAX_BACKUP_BYTES = 200 * 1024 * 1024
 
@@ -19,6 +19,11 @@ def backup(store: Store, destination: Path):
     private_location(destination)
     require_protected(store.root)
     require_protected(destination.parent)
+    for site in store.sites():
+        for audit in store.audits(site["id"]):
+            if audit["legacy"]:
+                require_protected(Path(audit["data_path"]))
+                require_protected(Path(audit["reports_path"]))
     from .runner import run_lock, GLOBAL_LOCK
     with run_lock(GLOBAL_LOCK):
         _backup(store, destination)
@@ -41,13 +46,11 @@ def _backup(store, destination):
                     for kind in ("data", "reports"):
                         base = store.audit_file(sid, aid, kind, "manifest.json" if kind == "data" else "snapshot.md").parent
                         for path in base.rglob("*"):
-                            if not path.is_file() or path.suffix not in {".csv", ".md", ".json"}:
-                                continue
-                            if (kind == "data" and path.name not in DATA_FILES) or (kind == "reports" and path.suffix != ".md"):
+                            if not path.is_file():
                                 continue
                             relative = path.relative_to(base)
-                            if len(relative.parts) > 2 or (len(relative.parts) == 2 and relative.parts[0] != "comparison"):
-                                raise ValueError("Unexpected evidence subtree")
+                            if not backup_evidence_path(relative, kind):
+                                continue
                             if not path.resolve().is_relative_to(base.resolve()) or any(p in path.name.casefold() for p in ("token", "secret", "credential")):
                                 raise ValueError("Forbidden file in evidence directory")
                             total += path.stat().st_size
@@ -58,6 +61,7 @@ def _backup(store, destination):
 
 def restore(archive: Path, root: Path):
     private_location(root)
+    require_protected(archive.parent)
     require_protected(root.parent)
     return _restore(archive, root)
 
@@ -78,10 +82,10 @@ def _restore(archive, root):
                 raise ValueError("Unsafe archive path")
             if info.filename not in {"backup.json", "metadata.sqlite"}:
                 parts = p.parts
-                if len(parts) not in (6, 7) or parts[0] != "sites" or parts[2] != "audits" or parts[4] not in ("data", "reports") or (len(parts) == 7 and parts[5] != "comparison"):
+                if len(parts) not in (6, 7) or parts[0] != "sites" or parts[2] != "audits" or parts[4] not in ("data", "reports"):
                     raise ValueError("Unexpected archive contents")
                 checked_id(parts[1]); checked_id(parts[3])
-                if p.suffix not in {".csv", ".md", ".json"} or any(v in p.name.casefold() for v in ("token", "secret", "credential")):
+                if not backup_evidence_path(PurePosixPath(*parts[5:]), parts[4]):
                     raise ValueError("Forbidden archive file")
         if json.loads(z.read("backup.json")).get("schema") != 1:
             raise ValueError("Unsupported backup schema")

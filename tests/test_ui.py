@@ -115,6 +115,17 @@ class UITests(unittest.TestCase):
         self.assertEqual(table.iloc[0]["query"], "'=SYNTHETIC_FORMULA")
         self.assertEqual(pd.read_csv(path).iloc[0]["query"], "=SYNTHETIC_FORMULA")
 
+    def test_live_app_stops_before_private_workspace_creation_when_unprotected(self):
+        from seo_agent.protection import ProtectionError
+        target = self.workspace.parent / "private-unprotected"
+        with patch.dict(os.environ, {"SEO_DEMO": "0", "SEO_WORKSPACE": str(target)}), patch("seo_agent.protection.require_protected", side_effect=ProtectionError("Storage protection unavailable")):
+            app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+        self.assertFalse(app.exception)
+        self.assertFalse(target.exists())
+        self.assertTrue(any("Storage protection unavailable" in w.value for w in app.warning))
+        self.assertFalse(app.sidebar.selectbox)
+        self.assertFalse(any(b.label == "Run read-only audit" for b in app.button))
+
 
 if __name__ == "__main__":
     unittest.main()

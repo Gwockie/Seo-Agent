@@ -14,7 +14,7 @@ from seo_agent.demo import seed_demo
 from seo_agent.gsc import service_for_credentials, validate_access
 from seo_agent.import_export import export_phrases, import_phrases, report_packet, spreadsheet_frame
 from seo_agent.metrics import totals, query_groups, exact_queries
-from seo_agent.protection import storage_status, require_protected
+from seo_agent.protection import storage_status, require_protected, ProtectionError
 from seo_agent.rules import read_csv, LIMITATIONS
 from seo_agent.runner import Jobs
 from seo_agent.storage import Store, new_id
@@ -324,7 +324,14 @@ def main():
     st.set_page_config(page_title="Local SEO workspace", layout="wide")
     st.title("Local SEO workspace")
     st.caption("One operator · read-only collection · site-scoped evidence · local proposed edits")
-    store = Store(WORKSPACE, enforce_protection=not DEMO)
+    try:
+        store = Store(WORKSPACE, enforce_protection=not DEMO)
+    except ProtectionError as exc:
+        st.warning(str(exc))
+        st.info("Live setup and collection are disabled. Verify the workspace's permissions and encryption, then restart the app. Existing evidence and credentials remain in place.")
+        st.code(f'python -m seo_agent --workspace "{WORKSPACE}" storage-check', language="powershell")
+        st.caption("See docs/setup-and-migration.md. Use python -m seo_agent app --demo for synthetic validation.")
+        return
     if DEMO:
         seed_demo(store)
         st.warning("DEMO: three synthetic sites. No client credentials or live website requests are used.")

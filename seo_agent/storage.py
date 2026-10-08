@@ -27,6 +27,20 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def historical_date(value: str) -> str:
+    """Normalize imported collection time in metadata; source manifests stay intact."""
+    try:
+        parsed = datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError("Historical collection date is invalid") from None
+        if parsed.tzinfo is None:
+            raise ValueError("Historical collection date must include a timezone")
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
 def config_hash(config: SiteConfig) -> str:
     return hashlib.sha256(json.dumps(config.model_dump(), sort_keys=True).encode()).hexdigest()
 
@@ -45,6 +59,14 @@ def private_location(path: Path) -> Path:
     if path.is_relative_to(repo) and not any(path.is_relative_to(repo / name) for name in ("workspace", ".tmp", "backups")):
         raise ValueError("Private app artifacts inside this repo must use an ignored workspace, backups or scratch directory")
     return path
+
+
+def credential_location(path: Path) -> Path:
+    path = path.resolve()
+    repo = Path(__file__).resolve().parent.parent
+    if path.is_relative_to(repo / "secrets"):
+        return path
+    return private_location(path)
 
 
 SCHEMA = """
@@ -70,7 +92,12 @@ class Store:
     def __init__(self, root: Path, *, legacy_root: Path | None = None, enforce_protection=False):
         self.enforce_protection = enforce_protection
         self.root = private_location(root)
+        if self.enforce_protection:
+            from .protection import require_protected, existing_ancestor
+            # Gate even empty directory/database creation, not only saved profiles.
+            require_protected(existing_ancestor(self.root))
         self.root.mkdir(parents=True, exist_ok=True)
+        self.require_private_write()
         self.legacy_root = (legacy_root or Path(__file__).resolve().parent.parent).resolve()
         self.db_path = child_path(self.root, "app.sqlite")
         with self.db() as db:
@@ -157,13 +184,20 @@ class Store:
                 raise ValueError("Legacy paths must be under the original data/reports directories")
             if not data.is_dir() or not reports.is_dir():
                 raise ValueError("Legacy evidence and reports directories must exist")
-        else:
+            if data.parent != self.legacy_root / "data" or reports.parent != self.legacy_root / "reports" or data.name != reports.name:
+                raise ValueError("Historical data/reports must be the matching snapshot pair")
+            if self.enforce_protection:
+                from .protection import require_protected
+                require_protected(data)
+                require_protected(reports)
+        recorded_date = historical_date(created) if created else utc_now()
+        if not legacy_paths:
             data = child_path(self.root, "sites", sid, "audits", aid, "data")
             reports = child_path(self.root, "sites", sid, "audits", aid, "reports")
             data.mkdir(parents=True, exist_ok=False)
             reports.mkdir(parents=True, exist_ok=False)
         with self.db() as db:
-            db.execute("INSERT INTO audits(id,site_id,created,status,config,resolved,data_path,reports_path,legacy) VALUES (?,?,?,?,?,?,?,?,?)", (aid, sid, created or utc_now(), "registered" if legacy_paths else "running", config.model_dump_json(), json.dumps(resolve_rules(config)), str(data), str(reports), int(bool(legacy_paths))))
+            db.execute("INSERT INTO audits(id,site_id,created,status,config,resolved,data_path,reports_path,legacy) VALUES (?,?,?,?,?,?,?,?,?)", (aid, sid, recorded_date, "registered" if legacy_paths else "running", config.model_dump_json(), json.dumps(resolve_rules(config)), str(data), str(reports), int(bool(legacy_paths))))
         return aid
 
     def audit(self, sid: str, aid: str):
@@ -193,8 +227,8 @@ class Store:
     def finish_audit(self, sid, aid, status, manifest):
         self.require_private_write()
         row = self.audit(sid, aid)
-        if row["legacy"]:
-            raise ValueError("Historical evidence is immutable")
+        if row["legacy"] or row["status"] != "running":
+            raise ValueError("Completed/historical evidence is immutable")
         if status not in ("complete", "partial", "failed"):
             raise ValueError("Invalid completion status")
         with self.db() as db:

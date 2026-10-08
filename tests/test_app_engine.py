@@ -169,7 +169,8 @@ class EngineTests(unittest.TestCase):
             self.store.save_site(SiteConfig.model_validate(changed), self.a)
 
     def test_private_metadata_writes_fail_without_protected_storage(self):
-        gated = Store(self.root / "gated", enforce_protection=True)
+        with patch("seo_agent.protection.require_protected"):
+            gated = Store(self.root / "gated", enforce_protection=True)
         with patch("seo_agent.protection.require_protected", side_effect=ValueError("Protection unavailable")):
             with self.assertRaises(ValueError):
                 gated.save_site(self.store.site(self.a))

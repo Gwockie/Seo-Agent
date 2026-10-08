@@ -75,6 +75,8 @@ def run_snapshot(context: AuditContext, svc, *, progress=None, crawl_fn=crawl):
     if not 1 <= ctx.max_pages <= 200 or not 1 <= ctx.inspect_limit <= 100:
         raise ValueError("Invalid bounded audit settings")
     window = windows(ctx.days, ctx.lag_days)
+    if any(p.exists() and (not p.is_dir() or any(p.iterdir())) for p in (ctx.data_dir, ctx.reports_dir)):
+        raise ValueError("Audit output must be empty; historical or partial evidence cannot be overwritten")
     resolved = resolve_rules(ctx.config)
     stages = {}
     manifest = {"schema_version": 1, "site_id": ctx.site_id, "audit_id": ctx.audit_id, "created_utc": utc_now(),

@@ -46,6 +46,27 @@ not verified. SQLite/CSV/Markdown are ordinary private files, not encrypted by
 keyring. Use a user-managed protected local directory; verify existing contents,
 permissions and encryption there. Do not put patient records in this app.
 
+Verification includes every existing descendant's ACL and encryption. Encrypting
+only a directory does not verify pre-existing plaintext files. Reparse points,
+inaccessible entries, more than 10,000 entries, or a 30-second verification timeout
+fail closed. The command creates no directory or SQLite file. A missing workspace
+reports its existing parent's status but does not count as verified; configure an
+existing protected workspace with the normal Windows tools before live setup.
+
+Use read-only diagnostics for each prerequisite:
+
+```powershell
+.\.venv-mvp\Scripts\python.exe -m seo_agent setup-check
+.\.venv-mvp\Scripts\python.exe -m seo_agent storage-check --path secrets
+.\.venv-mvp\Scripts\python.exe -m seo_agent storage-check --path 'data\STAMP'
+.\.venv-mvp\Scripts\python.exe -m seo_agent storage-check --path 'reports\STAMP'
+```
+
+`setup-check` reports only protection status, backend selection and credential
+format/size. It does not probe the vault, refresh a token, contact Google, verify
+account identity or certify live readiness. The live UI stops before loading
+private profiles or creating workspace artifacts if protection is unavailable.
+
 The app does not change ACLs, enable encryption or modify machine-wide settings.
 An operator or administrator must configure storage through their normal Windows
 tools. OS account compromise, admin access and shared Windows sessions remain
@@ -82,6 +103,23 @@ Add a connection reference in Setup. Then complete consent yourself from the CLI
 .\.venv-mvp\Scripts\python.exe -m seo_agent sites --connection CONNECTION_ID
 ```
 
+The CLI also supports explicit setup without the UI:
+
+```powershell
+.\.venv-mvp\Scripts\python.exe -m seo_agent add-connection --label 'Original practice Google account'
+# Copy the generated ID exactly. Authenticate or migrate only that new reference.
+.\.venv-mvp\Scripts\python.exe -m seo_agent auth --connection CONNECTION_ID --account ACCOUNT_EMAIL
+.\.venv-mvp\Scripts\python.exe -m seo_agent select-connection --site-id SITE_ID --connection CONNECTION_ID
+```
+
+`select-connection` validates access to the selected site's exact property before
+saving its account reference; failure preserves the previous selection and other
+sites. This does not infer the operator's account from a label or email hint.
+If credentials are in a separate protected directory, use the global option
+`--secrets 'D:\ProtectedSEO\secrets'` before the command. Only auth/migration and
+the legacy credential reader use that directory; selected Vault IDs stay explicit.
+Do not move or rewrite the legacy token as a setup shortcut.
+
 IDs are generated 32-character hex identifiers, not emails or path components.
 Omitting `--connection` from `auth` creates a separate ID. Reconnecting an existing
 ID changes only that explicitly named account reference. `--reauth` requires an
@@ -105,7 +143,7 @@ if real credentials exceed the limit; do not use plaintext as a workaround.
 
 ## Original practice and historical evidence
 
-This implementation checkout contained only `data/.gitkeep` and
+The initial MVP worktree contained only `data/.gitkeep` and
 `secrets/README.txt`, with no original URL, private reports or token. No live
 migration or October 6 indexing improvement was verified.
 
@@ -128,11 +166,15 @@ Register each historical pair without moving or rewriting it:
 .\.venv-mvp\Scripts\python.exe -m seo_agent register-legacy --site-id SITE_ID --data 'data\STAMP' --reports 'reports\STAMP'
 ```
 
-Both paths must be inside the original repository's data/reports roots. The
+Both paths must be the matching snapshot pair directly inside the original
+repository's data/reports roots. The
 manifest URL/exact property must match the selected site. A missing property or
 public-only manifest needs `--associate` for deliberate association; mismatching
 identities still fail. Imports preserve dates, narrative and original paths, label
 old rule versions unknown, and do not claim missing performance is zero.
+The SQLite collection timestamp is normalized to UTC for correct history ordering;
+the original manifest is not rewritten. Current site configuration is an explicit
+viewing association, not proof of the configuration/rules used historically.
 
 For a legacy token, add a **new unused** connection reference, then:
 
@@ -182,11 +224,16 @@ show observations alongside performance without claiming causality.
 
 Backup requires protected source/destination directories, excludes OAuth client
 files/tokens, and retains profiles, evidence, reports, states and changes, including
-registered legacy evidence. Restore requires a new directory, rejects traversal,
+registered legacy evidence. It also preserves saved HTML/text page captures,
+robots/sitemap evidence and historical validation metadata as inert files. Report
+packets still contain only the selected CSV/Markdown/JSON reporting subset, with
+spreadsheet-safe CSV exports; they are not full backups. Protection of registered
+legacy folders is rechecked before backup. Restore checks archive and destination
+storage, requires a new directory, rejects traversal,
 symlinks, unknown contents, excessive expansion and invalid database relationships.
 It remaps audit paths and detaches active Google connection references. Reconnect
 explicitly even on the same machine; another machine cannot rely on the previous
-user's vault. Keep the original backup until restored evidence has been checked.
+user’s vault. Keep the original backup until restored evidence has been checked.
 
 ## Development validation
 
