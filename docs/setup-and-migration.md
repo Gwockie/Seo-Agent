@@ -231,6 +231,11 @@ and `reviewed-proposed-edits.md` appear in the selected audit's report menu when
 present, without replacing generated reports. A labeled
 `reviewed-page-observations.json` supplement is included in scoped packets/backups.
 Reviewed browser observations do not change the raw crawl's recorded status.
+The **Recommendations & changes** view also has **Review together**, with plain
+labels for the selected audit's reviewed summary, recommendations and proposed
+edits. Reading or saving a document does not approve implementation. See
+[reviewing together in the app](review-in-app.md) for the one-click starter and
+the remaining read-only collection step.
 
 ```powershell
 .\.venv-mvp\Scripts\python.exe -m seo_agent backup 'D:\EncryptedBackups\seo-backup.zip'

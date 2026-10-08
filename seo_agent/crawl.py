@@ -30,7 +30,8 @@ def get_robot_parser(root_url: str, session: requests.Session) -> RobotFileParse
     rp.set_url(robots_url)
     try:
         resp = session.get(robots_url, timeout=15)
-        if resp.ok:
+        # Other 2xx responses can be unfinished bot challenges, not robots rules.
+        if resp.status_code == 200:
             rp.parse(resp.text.splitlines())
         elif resp.status_code == 404:
             rp.parse([])
@@ -187,7 +188,11 @@ def crawl(root_url: str, out_csv, max_pages: int = 200, delay: float = 0.25, *, 
     if not 1 <= max_pages <= 200:
         raise ValueError("Crawl must be bounded to 1–200 pages")
     session = PublicFetcher(root_url, max_requests=min(max_pages * 3 + 60, 660))
-    rp = get_robot_parser(root_url, session)
+    try:
+        rp = get_robot_parser(root_url, session)
+    except Exception:
+        session.close()
+        raise
 
     seeds = {root_url}
     for sm in discover_sitemaps(root_url, rp):

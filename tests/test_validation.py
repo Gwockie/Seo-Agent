@@ -30,9 +30,9 @@ class ValidationTests(unittest.TestCase):
             self.assertIn("No Search Console", (root / "reports/snapshot.md").read_text())
 
     def test_robots_failure_does_not_allow_crawl(self):
-        for status in (403, 429, 500):
+        for status in (201, 202, 204, 206, 403, 429, 500):
             session = Mock()
-            session.get.return_value = Mock(ok=False, status_code=status)
+            session.get.return_value = Mock(ok=status < 400, status_code=status, text="CAPTCHA_REQUIRED")
             with self.assertRaises(ValueError):
                 get_robot_parser("https://example.com/", session)
         session.get.side_effect = requests.ConnectionError()
