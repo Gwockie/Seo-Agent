@@ -101,6 +101,23 @@ class UITests(unittest.TestCase):
         self.assertIn(payload, [t.value for t in app.text])
         self.assertFalse(any("window.SECRET" in str(m.value) for m in app.markdown))
 
+    def test_reviewed_reports_are_literal_and_stay_with_selected_audit(self):
+        sid = self.ids["Demo psychology A"]
+        aid = self.store.audits(sid)[0]["id"]
+        payload = 'REVIEWED_SENTINEL <script>untrusted()</script>'
+        self.store.audit_file(sid, aid, "reports", "reviewed-executive-summary.md").write_text(payload, encoding="utf-8")
+        app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+        app.sidebar.selectbox[0].select(sid).run()
+        app.sidebar.radio[0].set_value("Overview & audits").run()
+        report = [box for box in app.selectbox if box.label == "View report"][0]
+        self.assertEqual(report.value, "reviewed-executive-summary.md")
+        self.assertIn(payload, [text.value for text in app.text])
+        self.assertFalse(any("untrusted()" in str(text.value) for text in app.markdown))
+        app.sidebar.selectbox[0].select(self.ids["Demo psychology B"]).run()
+        self.assertNotIn("reviewed-executive-summary.md", [box for box in app.selectbox if box.label == "View report"][0].options)
+        self.assertNotIn(payload, [text.value for text in app.text])
+        self.assertFalse(app.exception)
+
     def test_native_table_csv_downloads_receive_escaped_cells(self):
         import pandas as pd
         sid = self.ids["Demo electrician"]

@@ -1,21 +1,72 @@
-# Live-audit follow-up and next setup step
+# Live-audit follow-up
 
 "Operator" means you: the person using this app on your Windows computer.
 Windows permissions control which computer accounts can open the private files.
 Encryption protects the saved files if someone accesses the drive. You approved
 making disk encryption optional for local use. Restricted folder access remains
-required before using private Google data; this check has not passed yet. See the
+required before using private Google data; the approved folders now pass. See the
 [current local storage policy](local-storage-policy.md).
 
-You do not need to work through the migration commands yourself. Once Windows
-storage protection is confirmed, the agent can configure the original practice,
-copy the existing Google connection safely and register the old audit files.
-You would complete any Google sign-in/consent prompt that becomes necessary.
-The detailed commands below are a reference for that work.
+## Current checkpoint: October 8, 2026
 
-Validated October 7, 2026. Local application changes only; no new live practice
-audit, credential migration, OAuth consent or website/Search Console mutation.
-This note contains no private practice data or account identity.
+With explicit user approval, access to `secrets`, `data`, `reports` and the new
+`workspace/private` was restricted to the current Windows account, SYSTEM and
+Administrators. Original permissions were saved locally for rollback. All 49
+original files remained byte-identical, with none added, missing or moved in
+those original roots. Encryption was not enabled. The app itself still makes no
+automatic permission changes.
+
+The original practice was explicitly configured with its exact URL-prefix
+property and ten preserved phrases. Its existing read-only credential was copied
+into a new unused Windows Vault connection, retrieved and validated against that
+exact property before selection. The original token remains unchanged; no new
+consent or broader scope was required. Two historical audits were registered in
+place with their original collection dates and unknown historical rule versions.
+Clinical facts remain unconfirmed.
+
+A bounded live audit collected final web performance for equal 28-day Pacific
+calendar windows and read-only URL Inspection for the two selected priority
+service pages. Google performance, sitemaps and inspection completed. The overall
+audit remains **partial** because the automated public crawl received HTTP 202
+without usable page content. Both service pages rendered in a normal browser;
+those observations are saved separately and do not change the raw crawl status.
+No indexing improvement or effect of the user-reported October 6 fixes is claimed.
+
+Three reviewed reports and a labeled page-observation supplement were saved
+inside the selected audit, preserving all generated reports and raw exports.
+The report menu exposes these files only for their associated site and audit,
+as literal text. A local unencrypted, credential-free backup preserves all three
+audits; 72 archived evidence files matched their sources and no credential values
+were found in the archive. Private identities, evidence, reports, credentials
+and backup files remain excluded from Git publication.
+
+The necessary local fixes validate the older `site_url` identity field, preserve
+UTC folder timestamps when old manifests record only a date, reject conflicting
+or unknown dates, label unavailable public crawling partial, and retain reviewed
+observations in scoped packets/backups. The final full suite passed **63 tests**
+in 30.308 seconds, including seven Streamlit AppTest scenarios and the six
+original tests. Dependency consistency, compilation and whitespace checks passed.
+Dependencies and locks did not change; no new vulnerability scan was performed.
+The real browser check selected the original practice and displayed the saved
+partial audit, source statuses, priority-page inspections and reviewed executive
+summary. Socket inspection verified loopback-only binding at `127.0.0.1:8519`;
+the temporary tab and its server process tree were closed afterwards. A final
+recursive access check passed for all four private roots, including the new
+reports and backup; the original-file comparison still passed.
+
+Your next step is to review the saved proposed edits and confirm the actual
+clinical services before approving any exact website changes. An agent can handle
+the app commands. The remaining technical step is to obtain a successful bounded
+read-only public crawl, or a verified technical export, before claiming a complete
+website audit. Do not infer empty content or page-level `noindex` from the
+unfinished HTTP 202 response. No website write, sitemap change or indexing request
+was made. The scope remains exactly `webmasters.readonly`.
+
+## Historical checkpoints
+
+The October 7 notes below describe earlier blocked prerequisites and are retained
+as history. Their live-access limitations were superseded by the October 8 checks
+above. This public note contains no private practice data or account identity.
 
 ## Starting point and reviewable fixes
 
@@ -88,7 +139,7 @@ Their presence does not establish current Google access or authorized identity.
   read-only fingerprint comparison, with no new files in those roots. No original
   evidence file was moved or rewritten.
 
-## Next setup step
+## Earlier policy checkpoint and setup reference
 
 Subsequent user-approved policy validation: **58 tests passed** in 32.944 seconds,
 including an unencrypted-access Store regression, an explicit encryption diagnostic
@@ -100,11 +151,10 @@ was created. Read-only checks still found broad permissions on the credential an
 historical folders. No folder permissions, original files, Google credentials or
 website settings were changed; live access remains untested.
 
-A reviewed folder-only permission plan is prepared locally. The next step is your
-approval to restrict `secrets`, `data`, `reports` and a new `workspace/private` to
-your Windows account, SYSTEM and Administrators, with saved permissions for
-rollback and original-file hash verification. No encryption is required. Once
-access passes, the agent can perform the explicit setup/migration sequence below.
+At that earlier checkpoint, a reviewed folder-only permission plan awaited
+approval. The user subsequently approved it and the October 8 section records
+its application and the completed setup. The commands below remain reference
+instructions for another protected workspace, not a request to repeat setup.
 
 Configure an **existing protected workspace** and protect the original `secrets`,
 `data` and `reports` folders **including their existing contents** using normal

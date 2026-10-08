@@ -176,6 +176,10 @@ manifest URL/exact property must match the selected site. A missing property or
 public-only manifest needs `--associate` for deliberate association; mismatching
 identities still fail. Imports preserve dates, narrative and original paths, label
 old rule versions unknown, and do not claim missing performance is zero.
+Both `url` and the older public-only `site_url` field are checked. When a manifest
+has no full timestamp, a valid UTC snapshot folder name supplies the metadata
+timestamp with its source recorded explicitly. Conflicting dates or unknown
+timestamps are rejected rather than replaced with today's import date.
 The SQLite collection timestamp is normalized to UTC for correct history ordering;
 the original manifest is not rewritten. Current site configuration is an explicit
 viewing association, not proof of the configuration/rules used historically.
@@ -220,6 +224,13 @@ packets as private. Property totals, query-only totals, and query/page metrics u
 separate aggregations; they cannot be added together. Reports show source failures,
 row limits, final-data Pacific windows and measurement limitations. Change markers
 show observations alongside performance without claiming causality.
+HTTP 202 responses, robots-blocked pages and request failures keep the public crawl
+partial even when Google data succeeds; they cannot verify current page content.
+Separately prepared `reviewed-executive-summary.md`, `reviewed-recommendations.md`
+and `reviewed-proposed-edits.md` appear in the selected audit's report menu when
+present, without replacing generated reports. A labeled
+`reviewed-page-observations.json` supplement is included in scoped packets/backups.
+Reviewed browser observations do not change the raw crawl's recorded status.
 
 ```powershell
 .\.venv-mvp\Scripts\python.exe -m seo_agent backup 'D:\EncryptedBackups\seo-backup.zip'

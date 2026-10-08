@@ -10,11 +10,11 @@ from pathlib import Path
 import pandas as pd
 
 from .config import Phrase, SiteConfig, public_url, legacy_phrases
-from .storage import Store
+from .storage import Store, historical_date
 
 MAX_IMPORT = 2 * 1024 * 1024
 PHRASE_FIELDS = ["site_id", "phrase", "group", "related_terms", "location", "priority", "landing_page", "active"]
-DATA_FILES = {"manifest.json", "gsc_sitemaps.json", "crawl.csv", "opportunities.csv", "url_inspection.csv", "gsc_window.csv", *{"gsc_" + n + ".csv" for n in ("totals", "query_page", "queries", "pages", "daily", "device", "country")}}
+DATA_FILES = {"manifest.json", "gsc_sitemaps.json", "reviewed-page-observations.json", "crawl.csv", "opportunities.csv", "url_inspection.csv", "gsc_window.csv", *{"gsc_" + n + ".csv" for n in ("totals", "query_page", "queries", "pages", "daily", "device", "country")}}
 
 
 def backup_evidence_path(relative, kind):
@@ -108,22 +108,37 @@ def register_legacy(store, sid, data_path, reports_path, *, associate=False):
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
         raise ValueError("Historical manifest is invalid") from None
-    if manifest.get("url") and public_url(manifest["url"]) != config.url:
-        raise ValueError("Historical public URL differs from selected site")
+    for key in ("url", "site_url"):
+        if manifest.get(key) and public_url(manifest[key]) != config.url:
+            raise ValueError("Historical public URL differs from selected site")
+    source_url = manifest.get("url") or manifest.get("site_url")
     prop = manifest.get("site")
     if prop and prop != config.gsc_property:
         raise ValueError("Historical exact property differs from selected site")
-    if not manifest.get("url") or not prop:
+    if not source_url or not prop:
         if not associate:
             raise ValueError("Ambiguous/public-only import requires explicit site association")
+    created = manifest.get("created_utc")
+    time_source = "manifest.created_utc"
+    if not created:
+        # Old public captures record a date and a UTC stamp in the folder name.
+        # Preserve its source and never substitute the current import date.
+        stamp = re.fullmatch(r"(?:public-)?(\d{8}T\d{6}Z)", data.name)
+        if not stamp:
+            raise ValueError("Historical collection timestamp is missing; a UTC snapshot folder name is required")
+        created = stamp.group(1)
+        time_source = "snapshot folder UTC name; exact time was not recorded in the manifest"
+    created = historical_date(created)
+    if manifest.get("collected_date") and manifest["collected_date"] != created[:10]:
+        raise ValueError("Historical collection date conflicts with its UTC timestamp")
     for old in store.audits(sid):
         if Path(old["data_path"]) == data:
             return old["id"]
-    aid = store.create_audit(sid, legacy_paths=(data, reports), created=manifest.get("created_utc"))
+    aid = store.create_audit(sid, legacy_paths=(data, reports), created=created)
     # Metadata only; never write to original files or pretend narrative is automated.
     with store.db() as db:
         unknown_rules = {"registry_version": "unknown", "industry": config.industry, "profile_version": "unknown", "rules": {}, "note": "Original rule versions and configuration were not recorded. Current selected profile is an association for viewing, not historical provenance."}
-        db.execute("UPDATE audits SET manifest=?, resolved=?, status=? WHERE id=? AND site_id=?", (json.dumps({"legacy": True, "source": manifest, "gsc_available": bool(prop), "note": "Historical rules/configuration unknown; imported narrative is human-authored. Selected profile is an association only."}), json.dumps(unknown_rules), "legacy" if prop else "legacy-public-only", aid, sid))
+        db.execute("UPDATE audits SET manifest=?, resolved=?, status=? WHERE id=? AND site_id=?", (json.dumps({"legacy": True, "source": manifest, "gsc_available": bool(prop), "collection_time_source": time_source, "note": "Historical rules/configuration unknown; imported narrative is human-authored. Selected profile is an association only."}), json.dumps(unknown_rules), "legacy" if prop else "legacy-public-only", aid, sid))
     return aid
 
 

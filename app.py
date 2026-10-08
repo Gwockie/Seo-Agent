@@ -259,7 +259,8 @@ def audit_view(store, sid, config):
         st.json(totals(read_csv(comparison)))
     with st.expander("Saved effective profile (immutable audit snapshot)"):
         st.json(json.loads(audit["resolved"]))
-    report = st.selectbox("View report", ["executive-summary.md", "recommendations.md", "proposed-edits.md", "snapshot.md"], key=sid + ":report")
+    reviewed = [name for name in ("reviewed-executive-summary.md", "reviewed-recommendations.md", "reviewed-proposed-edits.md") if store.audit_file(sid, aid, "reports", name).is_file()]
+    report = st.selectbox("View report", reviewed + ["executive-summary.md", "recommendations.md", "proposed-edits.md", "snapshot.md"], key=sid + ":report")
     path = store.audit_file(sid, aid, "reports", report)
     if path.exists() and path.stat().st_size <= 2 * 1024 * 1024:
         content = path.read_text(encoding="utf-8")
