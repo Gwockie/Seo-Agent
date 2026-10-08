@@ -9,18 +9,20 @@ import pandas as pd
 import streamlit as st
 
 from seo_agent.appearance import app_css, capture_appearance, load_appearance
-from seo_agent.previews import load_preview, page_document, preview_frame, preview_revisions
+from seo_agent.previews import load_preview, page_document, preview_frame, preview_revisions, walk
 from seo_agent.review_format import report_html
 from seo_agent.config import SiteConfig, Phrase, resolve_rules, legacy_phrases
 from seo_agent.credentials import WindowsVault, load_connection
 from seo_agent.demo import seed_demo
 from seo_agent.gsc import service_for_credentials, validate_access
-from seo_agent.import_export import export_phrases, import_phrases, report_packet, spreadsheet_frame
+from seo_agent.import_export import export_phrases, import_phrases, report_packet, spreadsheet_frame, safe_csv
 from seo_agent.metrics import totals, query_groups, exact_queries
 from seo_agent.protection import storage_status, require_protected, ProtectionError
 from seo_agent.rules import read_csv, LIMITATIONS
 from seo_agent.runner import Jobs
 from seo_agent.storage import Store, new_id
+from seo_agent.setup_fields import service_rows, services_from_rows, facts_from_rows, rule_rows, overrides_from_rows, phrase_rows, phrases_from_rows
+from seo_agent.learning import METRICS, create_plan, plans, link_change, compare, save_review, reviews, explanation
 
 ROOT = Path(__file__).resolve().parent
 DEMO = os.environ.get("SEO_DEMO") == "1"
@@ -44,7 +46,8 @@ def error():
 def protection_for_ui(store):
     if DEMO:
         return {"verified": False, "reason": "Synthetic demonstration: live Google access and private backup are disabled."}
-    return storage_status(store.root)
+    # Reuse only this rerun's fresh complete check, never a cross-rerun cache.
+    return store.initial_protection or storage_status(store.root)
 
 
 def formatted_report(content):
@@ -86,11 +89,25 @@ def page_previews(store, sid, aid):
         proposed = display == "Proposed"
         st.caption("Browser title: " + (proposed_title if proposed else page["title"]))
         st.iframe(preview_frame(page_document(bundle, page, proposed=proposed, highlights=highlights)), height=870, alt="Proposed page" if proposed else "Captured page")
-    with st.expander("Exact proposed actions and facts to confirm"):
-        for action in page["actions"]:
+    with st.expander("Why these changes? Expected effects and how to check", expanded=True):
+        nodes = {n.get("id"): n.get("tag") for n in walk(page["tree"])}
+        for action_number, action in enumerate(page["actions"]):
+            expected = explanation(action, nodes.get(action.get("node_id"), ""))
             st.markdown("**" + action["kind"].capitalize() + " change**")
             st.text("Current: " + action["current"] + "\nProposed: " + action["proposed"])
-            st.text("Reason: " + action["rationale"] + "\nConfirm: " + action["confirmations"] + "\nValidation: " + action["validation"] + "\nRollback: " + action["rollback"])
+            st.markdown("**Why it is recommended**")
+            st.text(action["rationale"])
+            st.markdown("**What we expect**")
+            st.text(expected["expected_effect"])
+            st.markdown("**How we will check**")
+            st.text(expected["measurement"])
+            st.text("Confirm: " + action["confirmations"] + "\nValidation: " + action["validation"] + "\nRollback: " + action["rollback"])
+            if st.button("Prepare a tracking plan", key=f"{sid}:plan_action:{aid}:{revision}:{number}:{action_number}"):
+                st.session_state[sid + ":plan_seed"] = {"audit_id": aid, "title": action["kind"].capitalize() + " change on " + names[number],
+                    "why": action["rationale"], "url": page["url"], "current": action["current"], "proposed": action["proposed"], **expected}
+                st.session_state[sid + ":plan_baseline"] = aid
+                st.session_state["pending_view"] = "Changes & results"
+                st.rerun()
     st.info("These are local review drafts. Agents may revise a verified, separate staging copy and report the changes. Publishing or affecting the live site requires your separate approval of the exact actions and factual confirmation. Nothing has been staged or published on the website.")
 
 
@@ -101,25 +118,34 @@ def setup(store, sid, config):
         st.warning("Private profile writes, live audit and Google setup are unavailable until storage verification passes. Use the synthetic demonstration meanwhile.")
     connections = store.connections()
     connection_labels = {None: "No connection", **{r["id"]: r["label"] for r in connections}}
+    st.subheader("Set up this site")
+    st.caption("Start with the business and website. The lists below describe what this business offers. Save local profile keeps these settings on this computer; it does not change the website.")
     with st.form("setup_" + (sid or "new")):
-        name = st.text_input("Business name", value=config.name if config else "", max_chars=150)
-        url = st.text_input("Final public URL", value=config.url if config else "")
-        prop = st.text_input("Exact Search Console property", value=config.gsc_property if config else "")
-        industry = st.selectbox("Industry", ["general", "psychology"], index=1 if config and config.industry == "psychology" else 0)
-        cid = st.selectbox("Google connection", list(connection_labels), format_func=connection_labels.get, index=list(connection_labels).index(config.connection_id) if config and config.connection_id in connection_labels else 0)
-        location = st.text_input("Primary location", value=config.location if config else "", max_chars=120)
-        audience = st.text_input("Audience", value=config.audience if config else "", max_chars=300)
-        brands = st.text_area("Brand aliases (one per line)", value="\n".join(config.brand_aliases) if config else "", max_chars=6000)
-        groups = st.text_area("Service groups (JSON object of lists of related terms)", value=json.dumps(config.service_groups, indent=2) if config else "{}", max_chars=20000)
-        facts = st.text_area("Confirmed business facts (JSON object; no patient data)", value=json.dumps(config.confirmed_facts, indent=2) if config else "{}", max_chars=30000)
-        exclusions = st.text_area("Intentionally excluded URLs (one per line)", value="\n".join(config.exclusions) if config else "", max_chars=30000)
-        overrides = st.text_area("Allowed rule overrides (JSON)", value=json.dumps({k: v.model_dump(exclude_none=True) for k, v in config.overrides.items()}, indent=2) if config else "{}", max_chars=10000)
-        original = st.checkbox("This is the original Paoli practice: seed its ten documented phrases", value=False)
+        name = st.text_input("Business name", value=config.name if config else "", max_chars=150, help="The name customers recognize. This labels this site's reports and settings.")
+        url = st.text_input("Final public URL", value=config.url if config else "", help="Paste the website's public home address, including https://. Existing site addresses stay fixed to preserve their history.", disabled=bool(config))
+        prop = st.text_input("Exact Search Console property", value=config.gsc_property if config else "", help="Copy the property selected in Google Search Console exactly: either https://example.com/ or sc-domain:example.com. This selects the data source; it grants no extra access.", disabled=bool(config))
+        industry = st.selectbox("Industry", ["general", "psychology"], index=1 if config and config.industry == "psychology" else 0, help="Psychology adds clinician-review safeguards. General sites use their own services and locations.")
+        cid = st.selectbox("Google connection", list(connection_labels), format_func=connection_labels.get, index=list(connection_labels).index(config.connection_id) if config and config.connection_id in connection_labels else 0, help="Choose the saved Google account that has read-only access to this exact property. A missing connection does not delete saved reports.")
+        location = st.text_input("Primary location", value=config.location if config else "", max_chars=120, help="The genuine town or area the business serves. Leave blank if no specific location applies.")
+        audience = st.text_input("Audience", value=config.audience if config else "", max_chars=300, help="Who the services are for, using confirmed business information. Leave uncertain details out.")
+        brands = st.text_area("Brand aliases (one per line)", value="\n".join(config.brand_aliases) if config else "", max_chars=6000, help="Business-name spellings people may search for. These help distinguish people already looking for this business from new discovery searches.")
+        st.markdown("**Services and related search terms**")
+        st.caption("Add one search term per row. Repeat the service group to keep synonyms together. Existing group names link to your target phrases; changing them affects future audits.")
+        groups = st.data_editor(pd.DataFrame(service_rows(config.service_groups if config else {}), columns=["Service group", "Related search term"]), num_rows="dynamic", hide_index=True, key="setup_services:" + (sid or "new"), column_config={
+            "Service group": st.column_config.TextColumn(help="A service category, such as electrical_repairs. Repeat it for related terms."),
+            "Related search term": st.column_config.TextColumn(help="One phrase someone might use for this service, such as wiring repair. Do not add services the business does not offer.")})
+        st.markdown("**Confirmed business facts**")
+        st.caption("Optional. Add only facts checked with the business owner or clinician. Leave uncertain claims out. Do not enter patient or customer records.")
+        facts = st.data_editor(pd.DataFrame([{"Fact": k, "Confirmed value": v} for k, v in (config.confirmed_facts if config else {}).items()], columns=["Fact", "Confirmed value"]), num_rows="dynamic", hide_index=True, key="setup_facts:" + (sid or "new"), column_config={
+            "Fact": st.column_config.TextColumn(help="What was confirmed, such as office address or available service."),
+            "Confirmed value": st.column_config.TextColumn(help="The precise confirmed information. Saving a fact is your assertion; the app does not independently verify it.")})
+        exclusions = st.text_area("Intentionally excluded URLs (one per line)", value="\n".join(config.exclusions) if config else "", max_chars=30000, help="Optional: pages deliberately kept out of search, such as a private thank-you page. These are excluded from indexing recommendations; they are not a crawl blocklist.")
+        original = st.checkbox("This is the original Paoli practice: seed its ten documented phrases", value=False, help="Use only for the original practice. Checking this replaces its target list with the ten original phrases.")
         save = st.form_submit_button("Save local profile", disabled=not DEMO and not protection["verified"])
     if save:
         try:
             payload = {"name": name, "url": url, "gsc_property": prop, "connection_id": cid, "industry": industry, "location": location, "audience": audience,
-                "brand_aliases": [b.strip() for b in brands.splitlines() if b.strip()], "service_groups": json.loads(groups), "confirmed_facts": json.loads(facts), "exclusions": [v.strip() for v in exclusions.splitlines() if v.strip()], "overrides": json.loads(overrides), "phrases": [p.model_dump() for p in config.phrases] if config else []}
+                "brand_aliases": [b.strip() for b in brands.splitlines() if b.strip()], "service_groups": services_from_rows(groups.to_dict("records")), "confirmed_facts": facts_from_rows(facts.to_dict("records")), "exclusions": [v.strip() for v in exclusions.splitlines() if v.strip()], "overrides": {k: v.model_dump(exclude_none=True) for k, v in config.overrides.items()} if config else {}, "phrases": [p.model_dump() for p in config.phrases] if config else []}
             if original:
                 if industry != "psychology" or location.casefold() != "paoli":
                     raise ValueError("Original profile must deliberately select psychology and Paoli")
@@ -132,8 +158,9 @@ def setup(store, sid, config):
                 store.add_change(saved_id, date="2026-10-06", action="User reported indexing fixes; exact actions and affected URLs were not supplied.", verification="user-reported; unverified", evidence="Implementation handoff dated 2026-10-07")
             st.session_state["pending_site"] = saved_id
             st.rerun()
-        except (ValueError, TypeError):
-            error()
+        except (ValueError, TypeError) as exc:
+            st.error("Profile not saved. Check the fields and list rows below.")
+            st.text(str(exc)[:1600])
     with st.expander("Manage Google connection references"):
         st.caption("Separate IDs retain separate accounts. One connection can deliberately serve several accessible properties. Account hints do not verify identity.")
         with st.form("new_connection"):
@@ -166,6 +193,21 @@ def setup(store, sid, config):
             except Exception:
                 error()
     if config:
+        with st.expander("Advanced audit options"):
+            st.caption("Defaults work for ordinary audits. Minimum impressions avoids interpreting very small samples. CTR is the percentage of impressions that turn into clicks; its threshold is a review lead, not a success score. Clinical confirmation cannot be disabled.")
+            with st.form("audit_options_" + sid):
+                options = st.data_editor(pd.DataFrame(rule_rows(config)), hide_index=True, disabled=["Rule"], column_config={
+                    "Enabled": st.column_config.CheckboxColumn(help="Whether this diagnostic runs. Clinical review remains mandatory for psychology."),
+                    "Minimum impressions": st.column_config.NumberColumn(min_value=10, max_value=10000, step=1, help="Leave empty for rules that do not use a sample threshold."),
+                    "CTR threshold (%)": st.column_config.NumberColumn(min_value=0.1, max_value=10., step=0.1, help="A percentage, such as 3 for 3%. Leave empty for other rules.")}, key=sid + ":rule_options")
+                if st.form_submit_button("Save audit options", disabled=not DEMO and not protection["verified"]):
+                    try:
+                        overrides = overrides_from_rows(options.to_dict("records"), config)
+                        store.save_site(SiteConfig.model_validate({**config.model_dump(), "overrides": {k: v.model_dump(exclude_none=True) for k, v in overrides.items()}}), sid)
+                        st.rerun()
+                    except (ValueError, TypeError) as exc:
+                        st.error("Audit options not saved.")
+                        st.text(str(exc)[:1000])
         with st.expander("Site appearance", expanded=True):
             st.caption("New sites automatically import public colors and typography. Appearance stays with this site. Fonts are stored locally; no third-party styles run inside the app.")
             try:
@@ -205,10 +247,17 @@ def phrases(store, sid, config):
             except ValueError:
                 error()
     with st.form("edit_phrases_" + sid):
-        raw = st.text_area("Edit complete phrase list (validated JSON)", json.dumps([p.model_dump() for p in config.phrases], indent=2), height=200, max_chars=MAX_PHRASE_TEXT)
+        st.caption("Edit rows, add a row at the bottom, or select a row to delete it. Related terms stay one per line within their cell. Save writes only this site's future target list.")
+        raw = st.data_editor(pd.DataFrame(phrase_rows(config.phrases), columns=list(Phrase.model_fields)), num_rows="dynamic", hide_index=True, key=sid + ":phrase_editor", column_config={
+            "phrase": st.column_config.TextColumn("Target phrase", required=True, help="The exact search you want to measure."),
+            "group": st.column_config.TextColumn("Service group", help="Match a group from Setup to connect its related terms."),
+            "related_terms": st.column_config.TextColumn("Related terms", help="One term per line; the exact target phrase is measured separately."),
+            "priority": st.column_config.NumberColumn("Priority", min_value=1, max_value=5, step=1, default=3),
+            "active": st.column_config.CheckboxColumn("Active", default=True),
+            "landing_page": st.column_config.TextColumn("Intended page", help="The public page on this site that should answer this search.")})
         if st.form_submit_button("Save phrase list locally"):
             try:
-                store.save_site(SiteConfig.model_validate({**config.model_dump(), "phrases": json.loads(raw)}), sid)
+                store.save_site(SiteConfig.model_validate({**config.model_dump(), "phrases": [p.model_dump() for p in phrases_from_rows(raw.to_dict("records"))]}), sid)
                 st.rerun()
             except (ValueError, TypeError):
                 error()
@@ -376,7 +425,32 @@ def recommendations(store, sid, config):
         for number, row in enumerate(findings, start=1):
             f = row["payload"]
             with st.expander(f'{f["priority"]} {f["category"]} — finding {number}'):
-                st.json(f)
+                st.text("Page: " + f.get("url", "") + "\nSearch: " + f.get("query", ""))
+                st.markdown("**Why it is recommended**")
+                st.text(f.get("detail", "Evidence detail unavailable."))
+                st.markdown("**Suggested change**")
+                st.text(f.get("proposed_action", "Proposed action unavailable."))
+                expected = {
+                    "indexing": "Make an intended page eligible to appear in search; eligibility does not guarantee visibility.",
+                    "canonical": "Help Google consolidate signals on the intended URL. Google's selected canonical must be checked separately.",
+                    "broken_link": "Help visitors reach the intended destination and repair the observed navigation path.",
+                    "alignment": "Help relevant searches lead to the intended service page. Query/page data must show whether alignment improves.",
+                    "relevance": "Make the confirmed offering and location clearer. Better relevant visibility remains a hypothesis.",
+                    "ctr": "Test whether clearer search-result wording attracts more relevant clicks. Position and demand can also affect CTR.",
+                    "clinical_review": "Improve factual accuracy after clinician confirmation. A ranking benefit is not established."}.get(f.get("rule"), "A later evidence review is required to establish whether this helps.")
+                st.markdown("**What we expect**")
+                st.text(expected)
+                st.markdown("**How we will check**")
+                st.text(f.get("measurement", "Measurement plan unavailable."))
+                st.text("Facts to confirm: " + "; ".join(f.get("confirmations", [])))
+                st.text("Evidence: " + "; ".join(f"{ref['file']} row {ref['row']}" for ref in f.get("evidence", [])))
+                if st.button("Prepare a tracking plan", key=sid + ":plan_finding:" + row["id"]):
+                    st.session_state[sid + ":plan_seed"] = {"audit_id": aid, "title": f.get("category", "Recommendation"), "url": f.get("url", ""),
+                        "why": f.get("detail", ""), "expected_effect": expected, "measurement": f.get("measurement", ""),
+                        "metric": "Indexing / correct landing page" if f.get("rule") in ("indexing", "canonical", "alignment") else "Content accuracy / user experience" if f.get("rule") == "clinical_review" else "Page CTR" if f.get("rule") == "ctr" else "Page impressions"}
+                    st.session_state[sid + ":plan_baseline"] = aid
+                    st.session_state["pending_view"] = "Changes & results"
+                    st.rerun()
                 state = st.selectbox("Local recommendation state", ["proposed", "reviewed", "implemented", "verified", "dismissed"], index=["proposed", "reviewed", "implemented", "verified", "dismissed"].index(row["state"]), key=sid + ":state:" + row["id"])
                 if st.button("Save state", key=sid + ":save:" + row["id"]):
                     try:
@@ -414,11 +488,109 @@ def recommendations(store, sid, config):
     table(pd.DataFrame(store.changes(sid)), hide_index=True)
 
 
+def change_results(store, sid, config):
+    st.subheader("Changes & results")
+    st.info("A saved plan is a hypothesis. It does not approve or publish a website change. Record what was actually published, then compare later evidence. This journal preserves lessons for you and future audits; it does not automatically change audit rules.")
+    audits = store.audits(sid)
+    if not audits:
+        st.info("Collect or import an audit before creating a baseline plan.")
+        return
+    labels = {a["id"]: f'{a["created"]} — {a["status"]}' for a in audits}
+    seed = st.session_state.get(sid + ":plan_seed", {})
+    seed_aid = seed.get("audit_id")
+    baseline = st.selectbox("Baseline audit", list(labels), index=list(labels).index(seed_aid) if seed_aid in labels else 0, format_func=labels.get, key=sid + ":plan_baseline", help="The saved audit from before this change. Its site profile and evidence stay unchanged.")
+    with st.form("plan_" + sid):
+        title = st.text_input("Change name", seed.get("title", ""), max_chars=200)
+        url = st.text_input("Page affected", seed.get("url", ""), help="Use the exact public page address. Page metrics require it.")
+        current = st.text_area("Current value", seed.get("current", ""), max_chars=8000)
+        proposed = st.text_area("Proposed value", seed.get("proposed", ""), max_chars=8000)
+        why = st.text_area("Why we recommend it", seed.get("why", ""), max_chars=4000)
+        expected = st.text_area("Expected effect — a hypothesis", seed.get("expected_effect", ""), max_chars=4000, help="Describe the mechanism and intended benefit. Do not enter a promised ranking or traffic gain.")
+        metric = st.selectbox("Primary measure", METRICS, index=METRICS.index(seed.get("metric", METRICS[0])), help="Pick the main outcome. Page CTR is clicks divided by impressions. A lower average position is generally better. Content accuracy needs factual review.")
+        measurement = st.text_area("How we will check", seed.get("measurement", ""), max_chars=4000, help="Include the intended page/searches, factual checks and possible other explanations. Automatic comparisons require equal complete reporting periods before and after publication.")
+        if st.form_submit_button("Save tracking plan"):
+            try:
+                create_plan(store, sid, baseline, {"title": title, "url": url, "current": current, "proposed": proposed, "why": why, "expected_effect": expected, "metric": metric, "measurement": measurement})
+                st.session_state.pop(sid + ":plan_seed", None)
+                st.success("Tracking plan saved locally. No website change was made.")
+            except (ValueError, TypeError) as exc:
+                st.error("Plan not saved.")
+                st.text(str(exc)[:1200])
+    records = plans(store, sid)
+    st.markdown("**Saved plans and evidence reviews**")
+    if not records:
+        st.caption("No plans saved yet. A recommendation's Prepare a tracking plan button fills in the explanation for you.")
+    changes = store.changes(sid)
+    for record in records:
+        pid, p = record["id"], record["payload"]
+        with st.expander(p["title"], expanded=len(records) == 1):
+            st.text("Page: " + p["url"] + "\nWhy: " + p["why"] + "\nExpected: " + p["expected_effect"] + "\nCheck: " + p["measurement"])
+            st.caption("Baseline: " + labels.get(record["audit_id"], record["audit_id"]) + " · Main measure: " + p["metric"])
+            if not record["change_id"]:
+                st.caption("Planned. No published implementation is attached.")
+                with st.form("published_" + pid):
+                    published = st.date_input("Date published (Pacific reporting date)", value=date.today(), key=pid + ":date", help="Only record a change that was actually published. Local or staging edits do not produce public SEO outcomes.")
+                    evidence = st.text_area("What was published and how it was checked", key=pid + ":evidence", max_chars=4000)
+                    approval = st.text_input("Exact-action approval reference", key=pid + ":approval", help="A reference to the separate permission and factual review. Entering it here does not grant publication permission.")
+                    if st.form_submit_button("Record published implementation"):
+                        try:
+                            if not evidence.strip():
+                                raise ValueError("Describe the actual implementation and verification. This record remains user-reported.")
+                            cid = store.add_change(sid, date=published.isoformat(), action=p["title"], url=p["url"], prior_value=p["current"], proposed_value=p["proposed"], evidence=evidence, approval_reference=approval, verification="user-reported; unverified")
+                            link_change(store, sid, pid, cid)
+                            st.rerun()
+                        except (ValueError, TypeError) as exc:
+                            st.error("Implementation not attached.")
+                            st.text(str(exc)[:1000])
+                if changes:
+                    change_labels = {c["id"]: c["date"] + " — " + c["action"] for c in changes}
+                    existing = st.selectbox("Or choose an existing published change record", [None, *change_labels], format_func=lambda c: "Select a record" if c is None else change_labels[c], key=pid + ":existing")
+                    if st.button("Attach this existing record", key=pid + ":attach", disabled=existing is None):
+                        link_change(store, sid, pid, existing)
+                        st.rerun()
+            else:
+                attached = next(c for c in changes if c["id"] == record["change_id"])
+                st.caption("Publication recorded: " + attached["date"] + " · " + attached["verification"])
+            after = st.selectbox("Follow-up audit", list(labels), format_func=labels.get, key=pid + ":after")
+            result = compare(store, sid, pid, after)
+            if result["status"] == "comparable":
+                st.caption("Comparable final web-search periods in Pacific dates. Missing query rows and off-site factors limit conclusions.")
+                for label, side in (("Before", result["baseline"]), ("After", result["followup"])):
+                    st.text(f"{label}: {side['window']['start']} to {side['window']['end']} · {side['value']:.2%}" if p["metric"] == "Page CTR" else f"{label}: {side['window']['start']} to {side['window']['end']} · {side['value']:,.2f}")
+                    st.caption("Source: " + side["file"] + " · " + side["aggregation"])
+                st.text("Difference: " + (f"{result['difference'] * 100:+.2f} percentage points" if p["metric"] == "Page CTR" else f"{result['difference']:+,.2f}"))
+                if result["baseline"]["window"]["synthetic"]:
+                    st.warning("Synthetic demonstration data; these are not live results.")
+                if result["other_changes"]:
+                    st.caption("Other recorded changes may affect the comparison:")
+                    table(pd.DataFrame(result["other_changes"]), hide_index=True)
+            st.info(result["status"].capitalize() + ": " + result["reason"])
+            with st.form("review_" + pid):
+                lesson = st.text_area("What we learned / what remains uncertain", key=pid + ":lesson", max_chars=4000, help="Separate observations from explanations. Note other edits, changing demand, small samples or incomplete evidence.")
+                if st.form_submit_button("Save evidence review"):
+                    try:
+                        save_review(store, sid, pid, after, lesson)
+                        st.rerun()
+                    except (ValueError, TypeError) as exc:
+                        st.error("Review not saved.")
+                        st.text(str(exc)[:1000])
+            for review in reviews(store, sid, pid):
+                st.caption("Saved review: " + review["created"] + " · " + review["payload"]["comparison"]["status"])
+                st.text(review["payload"]["notes"])
+    if records:
+        st.download_button("Download this site's learning journal", safe_csv(pd.DataFrame([
+            {"site_id": sid, "plan_id": r["id"], "baseline_audit": r["audit_id"], "created": r["created"], **r["payload"],
+             "reviews": json.dumps([v["payload"] for v in reviews(store, sid, r["id"])], ensure_ascii=False)} for r in records])), "learning-journal.csv", "text/csv")
+
+
 MAX_PHRASE_TEXT = 250000
 
 
 def main():
     st.set_page_config(page_title="Local SEO workspace", layout="wide")
+    # Editable cells stay literal. Use our formula-safe CSV download controls
+    # instead of Streamlit's unsanitized editor export.
+    st.set_option("client.disableDataExport", True)
     st.html(app_css())
     st.title("Local SEO workspace")
     st.caption("One user · read-only collection · site-scoped evidence · local proposed edits")
@@ -437,6 +609,8 @@ def main():
     labels = {None: "Add a site", **{s["id"]: s["name"] for s in sites}}
     if "pending_site" in st.session_state:
         st.session_state["selected_site"] = st.session_state.pop("pending_site")
+    if "selected_site" not in st.session_state and len(sites) == 1:
+        st.session_state["selected_site"] = sites[0]["id"]
     sid = st.sidebar.selectbox("Site", list(labels), format_func=labels.get, key="selected_site")
     if st.session_state.get("previous_site") != sid:
         previous = st.session_state.get("previous_site")
@@ -445,7 +619,11 @@ def main():
                 if isinstance(key, str) and key.startswith(previous + ":"):
                     del st.session_state[key]
         st.session_state["previous_site"] = sid
-    view = st.sidebar.radio("View", ["Setup", "Target phrases", "Overview & audits", "Recommendations & changes"], key="view")
+    if "pending_view" in st.session_state:
+        st.session_state["view"] = st.session_state.pop("pending_view")
+    if "view" not in st.session_state:
+        st.session_state["view"] = "Recommendations & changes" if sid and store.audits(sid) else "Setup"
+    view = st.sidebar.radio("View", ["Setup", "Target phrases", "Overview & audits", "Recommendations & changes", "Changes & results"], key="view")
     if not sid:
         setup(store, None, None)
         return
@@ -462,8 +640,10 @@ def main():
         phrases(store, sid, config)
     elif view == "Overview & audits":
         audit_view(store, sid, config)
-    else:
+    elif view == "Recommendations & changes":
         recommendations(store, sid, config)
+    else:
+        change_results(store, sid, config)
 
 
 if __name__ == "__main__":

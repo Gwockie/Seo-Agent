@@ -12,6 +12,7 @@ gatherUsageStats = false
 
 [client]
 toolbarMode = "minimal"
+disableDataExport = true
 
 [theme]
 base = "light"

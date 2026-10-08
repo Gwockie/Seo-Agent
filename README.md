@@ -20,7 +20,7 @@ py -3.13 -m venv .venv-mvp
 .\.venv-mvp\Scripts\python.exe -m seo_agent app
 ```
 
-Open [the local app](http://127.0.0.1:8501). To try all four views immediately with
+Open [the local app](http://127.0.0.1:8501). To try the views immediately with
 three synthetic sites and no credentials/network collection:
 
 ```powershell
@@ -30,6 +30,9 @@ three synthetic sites and no credentials/network collection:
 After local setup is complete, you can also double-click **Start SEO App.cmd** in
 this folder. Keep its window open while using the app. See
 [reviewing together in the app](docs/review-in-app.md) for the review workflow.
+Setup has help tooltips and editable lists; recommendations explain expected
+effects and support a local **Changes & results** journal. See
+[guided setup and learning](docs/guided-setup-and-learning.md).
 
 Demo data lives separately in `workspace/demo`. Real data defaults to
 `workspace/private`; all private files, SQLite databases, raw evidence, credentials
@@ -64,6 +67,8 @@ Legacy token migration copies and validates, never deletes or rewrites the origi
 - **Recommendations & changes:** rule/version and own-site CSV row evidence,
   impact/confidence/effort, confirmations and measurement; local drafts, review
   states and independently approved change observations. State is not approval.
+- **Changes & results:** saved hypotheses, expected effects and later evidence
+  reviews. Comparable periods show observed changes; missing evidence stays unknown.
 
 New sites import their public colors and typography automatically, with a visible
 fallback when access is blocked and a refresh control in Setup. Prepared local

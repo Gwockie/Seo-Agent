@@ -65,6 +65,60 @@ class UITests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual([box for box in app.selectbox if box.label == "Industry"][0].value, "general")
 
+    def test_guided_setup_rows_and_save_preserve_existing_settings(self):
+        from streamlit import config as streamlit_config
+        sid = self.ids["Demo psychology A"]
+        before = self.store.site(sid).model_dump()
+        app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+        app.sidebar.selectbox[0].select(sid).run()
+        app.sidebar.radio[0].set_value("Setup").run()
+        self.assertFalse(app.exception)
+        self.assertFalse(any("JSON" in a.label for a in app.text_area))
+        self.assertTrue(streamlit_config.get_option("client.disableDataExport"))
+        columns = [set(df.value.columns) for df in app.dataframe]
+        self.assertIn({"Service group", "Related search term"}, columns)
+        self.assertIn({"Fact", "Confirmed value"}, columns)
+        self.assertTrue(next(t for t in app.text_input if t.label == "Final public URL").disabled)
+        self.assertTrue(next(t for t in app.text_input if t.label == "Business name").proto.help)
+        next(b for b in app.button if b.label == "Save local profile").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(self.store.site(sid).model_dump(), before)
+
+    def test_tracking_seed_explanations_and_reviews_are_scoped_and_persistent(self):
+        from seo_agent.learning import plans, reviews
+        sid = self.ids["Demo psychology A"]
+        app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+        app.sidebar.selectbox[0].select(sid).run()
+        app.sidebar.radio[0].set_value("Recommendations & changes").run()
+        self.assertTrue(any(m.value == "**What we expect**" for m in app.markdown))
+        next(b for b in app.button if b.label == "Prepare a tracking plan").click().run()
+        self.assertEqual(app.sidebar.radio[0].value, "Changes & results")
+        self.assertFalse(app.exception)
+        self.assertTrue(next(t for t in app.text_area if t.label == "Why we recommend it").value)
+        self.assertTrue(next(t for t in app.text_area if t.label == "Expected effect — a hypothesis").value)
+        next(b for b in app.button if b.label == "Save tracking plan").click().run()
+        self.assertFalse(app.exception)
+        record = plans(self.store, sid)[0]
+        self.assertTrue(any("No published implementation" in c.value for c in app.caption))
+        next(t for t in app.text_area if t.label == "What we learned / what remains uncertain").set_value("Waiting for implementation; no outcome yet")
+        next(b for b in app.button if b.label == "Save evidence review").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(reviews(self.store, sid, record["id"])[0]["payload"]["comparison"]["status"], "not ready")
+        app.sidebar.selectbox[0].select(self.ids["Demo psychology B"]).run()
+        self.assertEqual(plans(self.store, self.ids["Demo psychology B"]), [])
+        self.assertNotIn("Waiting for implementation; no outcome yet", [t.value for t in app.text])
+
+    def test_single_saved_site_reopens_in_review_without_changing_its_profile(self):
+        sid = self.ids["Demo electrician"]
+        original = self.store.site(sid).model_dump()
+        only = [{"id": sid, "name": original["name"]}]
+        with patch("seo_agent.storage.Store.sites", return_value=only):
+            app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.sidebar.selectbox[0].value, sid)
+        self.assertEqual(app.sidebar.radio[0].value, "Recommendations & changes")
+        self.assertEqual(self.store.site(sid).model_dump(), original)
+
     def test_rerun_does_not_duplicate_launch_or_redirect_job(self):
         app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
         a = self.ids["Demo psychology A"]

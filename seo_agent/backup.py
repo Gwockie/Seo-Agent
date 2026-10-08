@@ -113,7 +113,9 @@ def _restore(archive, root):
             raise ValueError("Invalid backup database")
         if db.execute("SELECT name FROM sqlite_master WHERE type IN ('trigger','view')").fetchall():
             raise ValueError("Executable database objects are prohibited")
-        if {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")} != {"connections", "sites", "target_phrases", "audits", "recommendations", "change_events"}:
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        original_tables = {"connections", "sites", "target_phrases", "audits", "recommendations", "change_events"}
+        if tables not in (original_tables, original_tables | {"change_plans", "result_reviews"}):
             raise ValueError("Unexpected backup database schema")
         for sid, raw in db.execute("SELECT id,config FROM sites").fetchall():
             checked_id(sid)
@@ -130,4 +132,12 @@ def _restore(archive, root):
     store = Store(root)
     for site in store.sites():
         load_appearance(store, site["id"])
+        from .learning import plans, validate_plan, reviews
+        for record in plans(store, site["id"]):
+            audit = store.audit(site["id"], record["audit_id"])
+            validate_plan(record["payload"], SiteConfig.model_validate_json(audit["config"]))
+            if record["change_id"] and not any(c["id"] == record["change_id"] for c in store.changes(site["id"])):
+                raise ValueError("Backup contains a change attached to another site")
+            for review in reviews(store, site["id"], record["id"]):
+                store.audit(site["id"], review["audit_id"])
     return store
