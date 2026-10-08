@@ -1,0 +1,13 @@
+# Compile on Windows / Python 3.13; retain the existing integrations.
+google-api-python-client>=2.186.0
+google-auth>=2.41.1
+google-auth-oauthlib>=1.2.3
+requests>=2.32.5
+beautifulsoup4>=4.13.0
+pandas>=2.2.0
+tabulate>=0.9.0
+tzdata>=2025.1
+streamlit>=1.50.0
+pydantic>=2.12.0,<3
+keyring>=25.7.0
+defusedxml>=0.7.1

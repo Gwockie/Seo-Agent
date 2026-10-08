@@ -1,153 +1,111 @@
-# Local SEO Agent — Stage 2
+# Local multi-site SEO workspace
 
-A local SEO audit project that pulls live Google Search Console data and crawls a public WordPress site.
+A small Windows/Streamlit app around the existing read-only Python SEO auditor.
+Select an independent site, configure its goals and Google account reference, run
+an audit, review evidence-backed recommendations and save local proposed edits.
+The original CLI and historical data/report paths remain available.
 
-The Python auditing tool does **not** modify WordPress. Agents may implement website
-changes only after explicit human approval of the exact actions, as defined in
-[AGENTS.md](AGENTS.md). Search Console access remains read-only.
+Website changes require explicit human approval of exact actions under
+[AGENTS.md](AGENTS.md). The app has no CMS write integration. Search Console uses
+only `https://www.googleapis.com/auth/webmasters.readonly`.
 
-## Planned multi-site app
+## Launch
 
-The next step is a lightweight local Streamlit app with secure Google connections,
-separate site workspaces, configurable industry rules, recommendations and reporting.
-The app is planned; the current implementation remains the CLI auditor.
-
-- [Implementation plan](docs/lightweight-multi-site-app-plan.md)
-- [Library and skill recommendations](docs/libraries-and-skills-recommendation.md)
-- [Implementation agent prompt and session settings](docs/implementation-agent-prompt.md)
-
-## Local audit outputs
-
-Audit reports and implementation handoff prompts live under `reports/` and remain
-local. They can contain private Search Console performance and indexing information
-and are not included in the public repository.
-
-Raw Search Console exports and downloaded page evidence under `data/`, OAuth
-credentials/tokens, temporary files, and `.venv` also remain local and ignored.
-Collect your own authorized snapshot after cloning the project.
-
-## 1. Create the Google Cloud OAuth credential
-
-In Google Cloud:
-
-1. Create/select a project.
-2. Enable **Google Search Console API**.
-3. Configure the Google Auth consent screen.
-4. If the app is in Testing mode, add the Google account that has access to the Search Console property as a test user.
-5. Create an OAuth Client ID with application type **Desktop app**.
-6. Download the JSON and save it as:
-
-   `secrets/client_secret.json`
-
-Do not commit this file.
-
-## 2. Install
-
-macOS/Linux:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Windows PowerShell:
+Validated for Windows and Python 3.13. Keep any existing environment until the new
+one has passed your checks:
 
 ```powershell
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+py -3.13 -m venv .venv-mvp
+.\.venv-mvp\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv-mvp\Scripts\python.exe -m seo_agent app
 ```
 
-Activation is optional. On Windows, you can run every command below with
-`.\.venv\Scripts\python.exe` instead of `python`.
-
-## 3. Authorize
-
-```bash
-python -m seo_agent auth
-```
-
-A Google browser consent window opens. The app requests only:
-
-`https://www.googleapis.com/auth/webmasters.readonly`
-
-The resulting refresh/access token is saved locally at `secrets/token.json`.
-
-Complete consent within five minutes. If authorization expires or is revoked,
-remove the local `secrets/token.json` and run `auth` again. The client credential
-must be a Desktop app JSON, with that exact filename (avoid `.json.json`).
-The account must be an OAuth test user when the app is in Testing mode.
-
-If `sites` returns no properties because the wrong account was authorized, switch
-accounts with `python -m seo_agent auth --reauth --account ACCOUNT_EMAIL`.
-The existing token is replaced only after new consent succeeds. An account hint
-suggests a login; confirm the selected account in the browser.
-
-## 4. Find the exact Search Console property identifier
-
-```bash
-python -m seo_agent sites
-```
-
-Use the exact property value returned. A domain property looks like:
-
-`sc-domain:example.com`
-
-A URL-prefix property looks like:
-
-`https://www.example.com/`
-
-## 5. Run a live audit snapshot
-
-```bash
-python -m seo_agent snapshot \
-  --site "sc-domain:example.com" \
-  --url "https://example.com" \
-  --days 90 \
-  --inspect
-```
-
-On Windows, put it on one line if preferred.
-
-The tool pulls:
-- Search Console query + page performance
-- query-only and page-only performance
-- device/country/date performance
-- submitted sitemap metadata
-- a public site crawl
-- optional Google URL Inspection results
-
-It writes timestamped data to `data/` and a mechanical summary to `reports/`.
-
-## 6. Hand the repository to Codex
-
-Ask Codex:
-
-> Follow AGENTS.md. Run a fresh snapshot for the configured site, analyze the latest timestamped data, inspect the most important public pages, and create the three requested reports. Do not make any external changes.
-
-## Cost
-
-This project uses the Google Search Console API plus public HTTP requests. There is no Semrush/Ahrefs dependency.
-
-## Notes
-
-Search Console is not a complete rank tracker: its API returns Google's Search Console performance data and is subject to Google's aggregation/data limits. It is still the best source of truth for how this specific property is actually appearing in Google.
-
-Reporting dates use Pacific time, matching Search Console. A 90-day window is
-inclusive and ends three days before the current reporting date by default.
-Query exports omit anonymized queries; missing queries do not prove zero demand.
-Exports are capped at 50,000 rows per dataset and use final web-search data.
-
-The crawler stops if robots.txt cannot be fetched (except a missing 404 file),
-checks robots rules and host boundaries before page/sitemap redirects, and records
-HTTP X-Robots-Tag directives and outgoing internal-link URLs. Robots crawl delays
-apply to the page crawl. Cross-host redirects are recorded as errors; use the
-website's final public hostname for `--url`. Inbound-link counts reflect only the
-sample actually crawled, not the full site.
-
-Local validation:
+Open [the local app](http://127.0.0.1:8501). To try all four views immediately with
+three synthetic sites and no credentials/network collection:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -m pip check
+.\.venv-mvp\Scripts\python.exe -m seo_agent app --demo
 ```
+
+Demo data lives separately in `workspace/demo`. Real data defaults to
+`workspace/private`; all private files, SQLite databases, raw evidence, credentials
+and reports are ignored by Git. No audits or credentials are bundled.
+
+## Before real client data
+
+Read [setup and migration](docs/setup-and-migration.md). Private writes, live
+collection, credential setup/migration and backup require verified operator-only
+Windows ACLs and EFS or protected BitLocker storage. An unavailable check fails
+closed. SQLite itself is not encrypted. The launcher uses loopback, CORS/XSRF
+protections and disabled telemetry; this is a single-operator tool.
+
+Google tokens use exactly the validated Windows WinVaultKeyring backend, with no
+plaintext fallback. Each connection has its own generated ID; reconnecting one
+preserves others. The 2,560-byte UTF-16 backend limit is checked before writes.
+Legacy token migration copies and validates, never deletes or rewrites the original.
+
+## Workflow
+
+- **Setup:** independent business/location/audience, brand aliases, confirmed facts,
+  service groups, exclusions, exact GSC property and connection. Review effective
+  base + industry + site rules. Select psychology deliberately; new sites default
+  to general. Saved URL/property identities cannot be changed to a different site.
+- **Target phrases:** exact targets, related intent terms, priority and intended
+  pages; bounded, explicitly site-associated CSV import/export.
+- **Overview & audits:** bounded manual collection, progress, source failures,
+  history, property metrics, daily trends, query groups, landing pages, inspection,
+  equal complete comparison windows and literal report viewing/export.
+- **Recommendations & changes:** rule/version and own-site CSV row evidence,
+  impact/confidence/effort, confirmations and measurement; local drafts, review
+  states and independently approved change observations. State is not approval.
+
+CTR is calculated from total clicks/impressions; aggregate position is impression
+weighted within the same dataset. Property totals are separate from query/page
+metrics. Final web data uses Pacific reporting dates with a three-day default lag.
+Missing query rows do not prove zero demand. Qualified inquiries and map-pack
+rankings are not supplied. Change dates do not prove causality.
+
+Read-only setup diagnostics create no workspace/database and never refresh tokens:
+
+```powershell
+.\.venv-mvp\Scripts\python.exe -m seo_agent setup-check
+.\.venv-mvp\Scripts\python.exe -m seo_agent storage-check --path secrets
+```
+
+Opening the live app stops before creating private files when protection fails.
+Checks cover existing descendants, not just the parent directory. See the
+[follow-up validation and operator handoff](docs/mvp-live-audit-follow-up.md).
+
+For configured sites:
+
+```powershell
+.\.venv-mvp\Scripts\python.exe -m seo_agent snapshot --site-id SITE_ID --days 28 --max-pages 50 --inspect
+```
+
+The legacy `snapshot --site EXACT_PROPERTY --url PUBLIC_URL --days 90 --inspect`
+keeps its `data/STAMP` and `reports/STAMP` output layout and uses the same runner.
+`auth`, `sites`, explicit legacy registration/migration and protected backup/restore
+are documented in the setup guide.
+
+## Validation and references
+
+```powershell
+.\.venv-mvp\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock
+.\.venv-mvp\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv-mvp\Scripts\python.exe -m pip check
+```
+
+- [Implementation/security checklist](docs/implementation-checklist.md)
+- [Follow-up agent prompt](docs/mvp-follow-up-agent-prompt.md)
+- [Setup, secure storage and migration](docs/setup-and-migration.md)
+- [Reviewed shared mechanisms](docs/shared-playbook.md)
+- [Repo-scoped seo-audit skill](.agents/skills/seo-audit/SKILL.md)
+- [Original implementation plan](docs/lightweight-multi-site-app-plan.md)
+- [Library choices](docs/libraries-and-skills-recommendation.md)
+- [Implementation handoff](docs/implementation-agent-prompt.md)
+
+Runtime and development dependencies are pinned/hashed separately. The crawler
+uses one GET-only helper for pages, robots and sitemaps, with public IPv4/IPv6/DNS
+and connection peer checks, explicit redirects, TLS verification, no ambient proxy
+or credentials, and bounded request/time/size budgets. Sitemap XML rejects DTDs,
+entities and external references. Imported text is data, never executable guidance.

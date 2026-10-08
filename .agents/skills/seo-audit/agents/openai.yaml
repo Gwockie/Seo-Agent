@@ -1,0 +1,4 @@
+interface:
+  display_name: "SEO audit"
+  short_description: "Site-scoped evidence and industry-aware SEO audits"
+  default_prompt: "Use $seo-audit to review the selected site and audit evidence."

@@ -21,14 +21,18 @@ def classify_query(q: str) -> str:
         labels.append("local")
     return ",".join(labels) or "other"
 
-def build_opportunities(data_dir: Path) -> pd.DataFrame:
+def build_opportunities(data_dir: Path, config=None) -> pd.DataFrame:
     path = data_dir / "gsc_query_page.csv"
     if not path.exists():
         return pd.DataFrame()
     df = pd.read_csv(path)
     if df.empty:
         return df
-    df["intent"] = df["query"].fillna("").map(classify_query)
+    if config is None:
+        df["intent"] = df["query"].fillna("").map(classify_query)
+    else:
+        from .metrics import classify
+        df["intent"] = df["query"].fillna("").map(lambda q: ",".join(classify(q, config)["groups"]) or "other")
 
     def opp(row):
         imp, pos, ctr = row.get("impressions", 0), row.get("position", 999), row.get("ctr", 0)
