@@ -13,7 +13,7 @@ from .config import SiteConfig, public_url, within_site
 from .storage import historical_date
 
 MAX_PREVIEW = 8 * 1024 * 1024
-TAGS = set("body main header footer section article nav aside div span p a h1 h2 h3 h4 h5 h6 ul ol li strong em b i small br hr img figure figcaption table thead tbody tr th td dl dt dd blockquote time".split())
+TAGS = set("body main header footer section article nav aside div span p a h1 h2 h3 h4 h5 h6 ul ol li strong em b i u s del ins sup sub abbr cite q address pre code mark small br hr img figure figcaption table thead tbody tr th td dl dt dd blockquote time".split())
 PROPERTIES = set("display position color background-color background-size background-position font-family font-size font-weight font-style line-height letter-spacing text-align text-transform text-decoration width max-width min-width min-height height margin-top margin-right margin-bottom margin-left padding-top padding-right padding-bottom padding-left box-sizing border-radius border-top-width border-top-color border-top-style border-right-width border-right-color border-right-style border-bottom-width border-bottom-color border-bottom-style border-left-width border-left-color border-left-style box-shadow flex-direction flex-wrap align-items justify-content gap row-gap column-gap grid-template-columns grid-template-rows align-self flex-grow flex-shrink flex-basis order object-fit list-style-type white-space overflow-wrap overflow opacity visibility clip clip-path".split())
 
 
@@ -236,4 +236,7 @@ def page_document(bundle, page, *, proposed=False, highlights=True):
 
 def preview_frame(document):
     # The inner sandbox has no permissions, including same-origin and scripts.
+    # Streamlit/browser data-URL wrappers can decode UTF-8 as Windows-1252.
+    # ASCII numeric entities survive that outer boundary without losing text.
+    document = document.encode("ascii", "xmlcharrefreplace").decode("ascii")
     return '<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0}</style></head><body><iframe title="Local page review preview" sandbox="" referrerpolicy="no-referrer" style="border:1px solid #d6d3d1;border-radius:8px;width:100%;height:850px" srcdoc="' + html.escape(document, quote=True) + '"></iframe></body></html>'

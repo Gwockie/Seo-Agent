@@ -65,10 +65,10 @@ in backups. New captures/proposals use new revisions rather than overwriting the
 earlier page evidence. **Proposed** is the initial display; choose **Before** or
 **Side by side** to compare.
 
-The appearance/preview update passed **81 tests**, including eleven Streamlit
-AppTest scenarios, in 25.359 seconds. Checks cover site/audit separation, current
+The appearance/preview update passed **82 tests**, including eleven Streamlit
+AppTest scenarios, in 23.242 seconds. Checks cover site/audit separation, current
 value matching, inert report markup, empty iframe sandbox permissions, external
-resource removal, UTF-8 in both preview documents, preservation of surrounding page structure, capture revisions,
+resource removal, character preservation across iframe wrappers, preservation of inline wording and surrounding page structure, capture revisions,
 and credential-free backup/restore of appearance and preview artifacts. Runtime
 dependencies and lock files did not change.
 

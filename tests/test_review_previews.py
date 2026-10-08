@@ -182,8 +182,20 @@ class ReviewTests(unittest.TestCase):
     def test_frame_declares_utf8_for_both_documents(self):
         self.bundle["pages"][0]["tree"]["children"].append({"text": "We’ll review — together."})
         document = page_document(self.bundle, self.bundle["pages"][0])
-        wrapper = BeautifulSoup(preview_frame(document), "html.parser")
+        source = preview_frame(document)
+        self.assertTrue(source.isascii())
+        wrapper = BeautifulSoup(source, "html.parser")
         self.assertEqual(wrapper.head.find("meta")["charset"], "utf-8")
         inner = BeautifulSoup(wrapper.iframe["srcdoc"], "html.parser")
         self.assertEqual(inner.head.find("meta")["charset"], "utf-8")
         self.assertIn("We’ll review — together.", inner.get_text())
+
+    def test_inert_inline_markup_retains_all_captured_words(self):
+        node = self.bundle["pages"][0]["tree"]["children"][0]
+        node["children"] = [{"text": "Our "}, {"id": "r3", "tag": "u", "children": [{"text": "service"}]}]
+        soup = BeautifulSoup(page_document(self.bundle, self.bundle["pages"][0]), "html.parser")
+        self.assertEqual(soup.h1.get_text(), "Our service")
+        # A different element without a proposed edit retains its underline.
+        self.bundle["pages"][0]["tree"]["children"].append({"id": "r4", "tag": "u", "children": [{"text": "here"}]})
+        soup = BeautifulSoup(page_document(self.bundle, self.bundle["pages"][0]), "html.parser")
+        self.assertEqual(soup.u.get_text(), "here")
