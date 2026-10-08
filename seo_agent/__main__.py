@@ -69,6 +69,15 @@ def main():
     check.add_argument('--path', type=Path, help='Check another existing asset directory')
     check.add_argument('--require-encryption', action='store_true', help='Also require verified EFS/BitLocker; optional for local operation')
     sub.add_parser('setup-check', help='Read-only prerequisite summary; never refreshes or prints credentials')
+    handoff = sub.add_parser('import-handoff', help='Import an inert selected-audit proposal; never approval')
+    handoff.add_argument('--site-id', required=True)
+    handoff.add_argument('--audit-id', required=True)
+    handoff.add_argument('file', type=Path)
+    receipt = sub.add_parser('record-receipt', help='Record an implementation attempt/outcome; no website writes or approval')
+    receipt.add_argument('--site-id', required=True)
+    receipt.add_argument('file', type=Path)
+    refresh = sub.add_parser('tracking-refresh', help='Bounded read-only selected-site page check and daily-source import')
+    refresh.add_argument('--site-id', required=True)
     args = p.parse_args()
     if args.command == 'app':
         if not 1024 <= args.port <= 65535:
@@ -95,7 +104,20 @@ def main():
     from .storage import credential_location
     secrets = credential_location(args.secrets)
     store = Store(args.workspace, enforce_protection=True)
-    if args.command == 'add-connection':
+    if args.command in ('import-handoff', 'record-receipt'):
+        from .tracking import import_handoff, record_receipt, MAX_DOCUMENT
+        from .runner import run_lock, GLOBAL_LOCK
+        require_protected(args.file.parent)
+        if args.file.stat().st_size > MAX_DOCUMENT:
+            raise ValueError('Tracking input exceeds 2 MiB')
+        with run_lock(GLOBAL_LOCK):
+            raw = args.file.read_bytes()
+            result = import_handoff(store, args.site_id, args.audit_id, raw) if args.command == 'import-handoff' else record_receipt(store, args.site_id, raw)
+        print('Local tracking record: ' + result)
+    elif args.command == 'tracking-refresh':
+        from .page_tracking import refresh
+        print(json.dumps(refresh(store, args.site_id, manual=True)))
+    elif args.command == 'add-connection':
         print(store.add_connection(args.label))
     elif args.command == 'select-connection':
         from .credentials import load_connection

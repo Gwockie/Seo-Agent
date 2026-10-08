@@ -38,6 +38,11 @@ The next agreed [change-to-results workflow](docs/seo-change-workflow.md) has
 separate copyable prompts for [building tracking](docs/change-tracking-agent-prompt.md)
 and [continuing Meadow & Mind's audit](docs/meadow-and-mind-agent-prompt.md) in parallel.
 
+Automatic receipts, exact human batch review, public change observations and
+annotated persistent site/page trends are now available. Follow
+[tracking usage and receipt contracts](docs/automatic-change-tracking.md).
+Website implementation remains a separately authorized WordPress step.
+
 Demo data lives separately in `workspace/demo`. Real data defaults to
 `workspace/private`; all private files, SQLite databases, raw evidence, credentials
 and reports are ignored by Git. No audits or credentials are bundled.

@@ -90,7 +90,47 @@ CREATE TABLE IF NOT EXISTS change_plans(id TEXT PRIMARY KEY, site_id TEXT NOT NU
 CREATE TABLE IF NOT EXISTS result_reviews(id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES change_plans(id),
  site_id TEXT NOT NULL, audit_id TEXT NOT NULL, created TEXT NOT NULL, payload TEXT NOT NULL,
  FOREIGN KEY(audit_id,site_id) REFERENCES audits(id,site_id), FOREIGN KEY(plan_id,site_id) REFERENCES change_plans(id,site_id));
-PRAGMA user_version=1;
+"""
+
+# Additive migration: old journals and evidence are never rewritten.
+TRACKING_TABLES = {"tracking_actions", "handoff_imports", "publication_batches", "human_approvals",
+                   "implementation_receipts", "public_snapshots", "outside_changes", "tracking_checks",
+                   "tracking_settings", "trend_sources", "tracking_reviews", "approval_invalidations"}
+TRACKING_SCHEMA = """
+CREATE TABLE IF NOT EXISTS tracking_actions(action_id TEXT NOT NULL, site_id TEXT NOT NULL,
+ revision INTEGER NOT NULL, audit_id TEXT NOT NULL, plan_id TEXT, created TEXT NOT NULL, payload TEXT NOT NULL,
+ PRIMARY KEY(action_id,site_id,revision),
+ FOREIGN KEY(audit_id,site_id) REFERENCES audits(id,site_id),
+ FOREIGN KEY(plan_id,site_id) REFERENCES change_plans(id,site_id));
+CREATE TABLE IF NOT EXISTS handoff_imports(id TEXT PRIMARY KEY, site_id TEXT NOT NULL, audit_id TEXT NOT NULL,
+ digest TEXT NOT NULL UNIQUE, created TEXT NOT NULL, payload TEXT NOT NULL,
+ FOREIGN KEY(audit_id,site_id) REFERENCES audits(id,site_id));
+CREATE TABLE IF NOT EXISTS publication_batches(id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id),
+ created TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(id,site_id));
+CREATE TABLE IF NOT EXISTS human_approvals(id TEXT PRIMARY KEY, site_id TEXT NOT NULL, batch_id TEXT NOT NULL,
+ created TEXT NOT NULL, payload TEXT NOT NULL, FOREIGN KEY(batch_id,site_id) REFERENCES publication_batches(id,site_id));
+CREATE TABLE IF NOT EXISTS implementation_receipts(id TEXT PRIMARY KEY, site_id TEXT NOT NULL, action_id TEXT NOT NULL,
+ revision INTEGER NOT NULL, created TEXT NOT NULL, payload TEXT NOT NULL,
+ FOREIGN KEY(action_id,site_id,revision) REFERENCES tracking_actions(action_id,site_id,revision));
+CREATE TABLE IF NOT EXISTS approval_invalidations(id TEXT PRIMARY KEY, site_id TEXT NOT NULL, approval_id TEXT NOT NULL
+ REFERENCES human_approvals(id), action_id TEXT NOT NULL, revision INTEGER NOT NULL, created TEXT NOT NULL, payload TEXT NOT NULL,
+ FOREIGN KEY(action_id,site_id,revision) REFERENCES tracking_actions(action_id,site_id,revision));
+CREATE TABLE IF NOT EXISTS public_snapshots(id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id),
+ url TEXT NOT NULL, checked TEXT NOT NULL, status TEXT NOT NULL, audit_id TEXT, payload TEXT NOT NULL,
+ FOREIGN KEY(audit_id,site_id) REFERENCES audits(id,site_id));
+CREATE TABLE IF NOT EXISTS outside_changes(id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id),
+ url TEXT NOT NULL, first_seen TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tracking_checks(id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id),
+ started TEXT NOT NULL, finished TEXT, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tracking_settings(site_id TEXT PRIMARY KEY REFERENCES sites(id), payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS trend_sources(id TEXT PRIMARY KEY, site_id TEXT NOT NULL, audit_id TEXT NOT NULL,
+ period TEXT NOT NULL, dataset TEXT NOT NULL, created TEXT NOT NULL, payload TEXT NOT NULL,
+ UNIQUE(site_id,audit_id,period,dataset), FOREIGN KEY(audit_id,site_id) REFERENCES audits(id,site_id));
+CREATE TABLE IF NOT EXISTS tracking_reviews(id TEXT PRIMARY KEY, site_id TEXT NOT NULL, action_id TEXT NOT NULL,
+ revision INTEGER NOT NULL, audit_id TEXT NOT NULL, created TEXT NOT NULL, payload TEXT NOT NULL,
+ FOREIGN KEY(action_id,site_id,revision) REFERENCES tracking_actions(action_id,site_id,revision),
+ FOREIGN KEY(audit_id,site_id) REFERENCES audits(id,site_id));
+PRAGMA user_version=2;
 """
 
 
@@ -112,9 +152,10 @@ class Store:
         self.db_path = child_path(self.root, "app.sqlite")
         with self.db() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise ValueError("Unsupported workspace schema version")
             db.executescript(SCHEMA)
+            db.executescript("BEGIN IMMEDIATE;\n" + TRACKING_SCHEMA + "\nCOMMIT;")
 
     def require_private_write(self):
         if self.enforce_protection:

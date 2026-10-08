@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from .protection import require_protected
-from .storage import Store, child_path, checked_id, config_hash, private_location
+from .storage import Store, child_path, checked_id, config_hash, private_location, TRACKING_TABLES
 from .config import SiteConfig
 from .import_export import backup_evidence_path
 from .appearance import appearance_path, load_appearance
@@ -115,8 +115,20 @@ def _restore(archive, root):
             raise ValueError("Executable database objects are prohibited")
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         original_tables = {"connections", "sites", "target_phrases", "audits", "recommendations", "change_events"}
-        if tables not in (original_tables, original_tables | {"change_plans", "result_reviews"}):
+        journal_tables = {"change_plans", "result_reviews"}
+        if tables not in (original_tables, original_tables | journal_tables, original_tables | journal_tables | TRACKING_TABLES):
             raise ValueError("Unexpected backup database schema")
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version not in (0, 1, 2):
+            raise ValueError("Unsupported backup database version")
+        from .storage import SCHEMA, TRACKING_SCHEMA
+        with closing(sqlite3.connect(":memory:")) as expected:
+            expected.executescript(SCHEMA + TRACKING_SCHEMA)
+            for table in tables:
+                # Table names have already been checked against a fixed allowlist.
+                for pragma in ("table_info", "foreign_key_list"):
+                    if db.execute(f"PRAGMA {pragma}({table})").fetchall() != expected.execute(f"PRAGMA {pragma}({table})").fetchall():
+                        raise ValueError("Unexpected backup table structure")
         for sid, raw in db.execute("SELECT id,config FROM sites").fetchall():
             checked_id(sid)
             config = SiteConfig.model_validate_json(raw)
@@ -140,4 +152,6 @@ def _restore(archive, root):
                 raise ValueError("Backup contains a change attached to another site")
             for review in reviews(store, site["id"], record["id"]):
                 store.audit(site["id"], review["audit_id"])
+    from .tracking import validate_restored_tracking
+    validate_restored_tracking(store)
     return store
