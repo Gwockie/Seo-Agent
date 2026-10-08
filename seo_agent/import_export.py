@@ -14,7 +14,8 @@ from .storage import Store, historical_date
 
 MAX_IMPORT = 2 * 1024 * 1024
 PHRASE_FIELDS = ["site_id", "phrase", "group", "related_terms", "location", "priority", "landing_page", "active"]
-DATA_FILES = {"manifest.json", "gsc_sitemaps.json", "reviewed-page-observations.json", "crawl.csv", "opportunities.csv", "url_inspection.csv", "gsc_window.csv", *{"gsc_" + n + ".csv" for n in ("totals", "query_page", "queries", "pages", "daily", "device", "country")}}
+DATA_FILES = {"manifest.json", "gsc_sitemaps.json", "reviewed-page-observations.json", "review-preview.json", "crawl.csv", "opportunities.csv", "url_inspection.csv", "gsc_window.csv", *{"gsc_" + n + ".csv" for n in ("totals", "query_page", "queries", "pages", "daily", "device", "country")}}
+DATA_FILES.update(f"review-preview-v{revision}.json" for revision in range(2, 21))
 
 
 def backup_evidence_path(relative, kind):

@@ -174,7 +174,7 @@ def resolve_rules(config: SiteConfig) -> dict:
         resolved[key] = {**rule, "settings": settings}
     return {"registry_version": "1.0", "industry": config.industry, "profile_version": config.profile_version,
             "rules": resolved, "guidance": INDUSTRIES[config.industry],
-            "immutable_controls": ["read-only GSC", "exact-action website approval", "factual integrity", "site isolation", "public destination validation", "protected credentials"]}
+            "immutable_controls": ["read-only GSC", "exact-action production approval", "verified isolated staging with change disclosure", "factual integrity", "site isolation", "public destination validation", "protected credentials"]}
 
 
 LEGACY_PHRASES = ["ADHD assessment Paoli", "ADHD assessment in Paoli", "ADHD testing Paoli", "ADHD evaluation Paoli", "ADHD assessment near me", "ADHD testing near me", "psychological testing Paoli", "therapy Paoli", "therapist Paoli", "therapy near me"]

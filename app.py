@@ -8,6 +8,9 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from seo_agent.appearance import app_css, capture_appearance, load_appearance
+from seo_agent.previews import load_preview, page_document, preview_frame, preview_revisions
+from seo_agent.review_format import report_html
 from seo_agent.config import SiteConfig, Phrase, resolve_rules, legacy_phrases
 from seo_agent.credentials import WindowsVault, load_connection
 from seo_agent.demo import seed_demo
@@ -44,6 +47,53 @@ def protection_for_ui(store):
     return storage_status(store.root)
 
 
+def formatted_report(content):
+    st.caption("Saved reports retain their original wording. The current staging and publication policy shown in the app supersedes older approval wording.")
+    st.html(report_html(content))
+    with st.expander("Original report text"):
+        st.text(content)
+
+
+def page_previews(store, sid, aid):
+    try:
+        revisions = preview_revisions(store, sid, aid)
+        revision = st.selectbox("Saved page capture", revisions[::-1], format_func=lambda r: f"Capture {r}" , key=sid + ":preview_capture:" + aid) if len(revisions) > 1 else None
+        bundle = load_preview(store, sid, aid, revision=revision)
+    except (ValueError, KeyError, TypeError):
+        st.warning("This preview could not be validated against the selected site and captured values. The saved report remains available.")
+        return
+    if not bundle:
+        st.info("No page copies have been prepared for this audit yet. Proposed edits need a captured page and exact current values before a visual preview can be shown.")
+        return
+    st.subheader("See the proposed page changes")
+    st.caption("Local copies of public pages. Links and forms are inactive. Green marks proposed wording; red marks wording it would replace. Gold outlines mark changed link destinations.")
+    names = {i: p["url"].split("/")[-2] or p["title"] for i, p in enumerate(bundle["pages"])}
+    number = st.selectbox("Page to compare", list(names), format_func=names.get, key=sid + ":preview_page:" + aid)
+    page = bundle["pages"][number]
+    st.text(page["url"])
+    st.caption("Public page captured " + page["captured_utc"] + f" at {page['width']}px wide. Static layout; interactive and unsupported decorative elements are omitted. This capture supplements the audit and does not complete its automated crawl.")
+    display = st.radio("Page display", ["Proposed", "Before", "Side by side"], horizontal=True, key=sid + ":preview_display:" + aid)
+    highlights = st.checkbox("Highlight differences", value=True, key=sid + ":preview_highlights:" + aid)
+    proposed_title = next((a["proposed"] for a in page["actions"] if a["kind"] == "title"), page["title"])
+    if display == "Side by side":
+        columns = st.columns(2)
+        for column, proposed in zip(columns, (False, True)):
+            with column:
+                st.markdown("**Proposed**" if proposed else "**Before**")
+                st.caption("Browser title: " + (proposed_title if proposed else page["title"]))
+                st.iframe(preview_frame(page_document(bundle, page, proposed=proposed, highlights=highlights)), height=870, alt="Proposed page" if proposed else "Captured page")
+    else:
+        proposed = display == "Proposed"
+        st.caption("Browser title: " + (proposed_title if proposed else page["title"]))
+        st.iframe(preview_frame(page_document(bundle, page, proposed=proposed, highlights=highlights)), height=870, alt="Proposed page" if proposed else "Captured page")
+    with st.expander("Exact proposed actions and facts to confirm"):
+        for action in page["actions"]:
+            st.markdown("**" + action["kind"].capitalize() + " change**")
+            st.text("Current: " + action["current"] + "\nProposed: " + action["proposed"])
+            st.text("Reason: " + action["rationale"] + "\nConfirm: " + action["confirmations"] + "\nValidation: " + action["validation"] + "\nRollback: " + action["rollback"])
+    st.info("These are local review drafts. Agents may revise a verified, separate staging copy and report the changes. Publishing or affecting the live site requires your separate approval of the exact actions and factual confirmation. Nothing has been staged or published on the website.")
+
+
 def setup(store, sid, config):
     protection = protection_for_ui(store)
     st.info(protection["reason"])
@@ -75,6 +125,9 @@ def setup(store, sid, config):
                     raise ValueError("Original profile must deliberately select psychology and Paoli")
                 payload["phrases"] = [p.model_dump() for p in legacy_phrases()]
             saved_id = store.save_site(SiteConfig.model_validate(payload), sid)
+            if not sid:
+                with st.spinner("Reading this site's public colors and typography…"):
+                    capture_appearance(store, saved_id, demo=DEMO)
             if original and not any("User reported indexing fixes" in c["action"] for c in store.changes(saved_id)):
                 store.add_change(saved_id, date="2026-10-06", action="User reported indexing fixes; exact actions and affected URLs were not supplied.", verification="user-reported; unverified", evidence="Implementation handoff dated 2026-10-07")
             st.session_state["pending_site"] = saved_id
@@ -113,6 +166,22 @@ def setup(store, sid, config):
             except Exception:
                 error()
     if config:
+        with st.expander("Site appearance", expanded=True):
+            st.caption("New sites automatically import public colors and typography. Appearance stays with this site. Fonts are stored locally; no third-party styles run inside the app.")
+            try:
+                appearance = load_appearance(store, sid)
+                if appearance:
+                    st.text("Status: " + appearance["status"] + " · " + appearance["captured_utc"])
+                    st.caption(appearance["note"])
+                    st.text("Headings: " + appearance["heading_font"] + " · Body: " + appearance["body_font"] + " · Accent: " + appearance["accent"])
+                else:
+                    st.info("Appearance has not been captured for this site. A readable default is in use.")
+                if st.button("Refresh site appearance", disabled=not DEMO and not protection["verified"], key=sid + ":appearance_refresh"):
+                    with st.spinner("Reading public site appearance…"):
+                        capture_appearance(store, sid, demo=DEMO)
+                    st.rerun()
+            except (ValueError, KeyError, TypeError):
+                st.warning("Saved appearance is unavailable or invalid. A readable default is in use.")
         with st.expander("Effective profile/settings for future audits"):
             st.json({"site": config.model_dump(), "effective": resolve_rules(config)})
 
@@ -264,7 +333,7 @@ def audit_view(store, sid, config):
     path = store.audit_file(sid, aid, "reports", report)
     if path.exists() and path.stat().st_size <= 2 * 1024 * 1024:
         content = path.read_text(encoding="utf-8")
-        st.text(content)  # Literal untrusted content; no HTML/Markdown execution.
+        formatted_report(content)
         st.download_button("Download selected Markdown report", content, report, "text/markdown")
     try:
         st.download_button("Export this audit's evidence/report packet", report_packet(store, sid, aid), "audit-packet.zip", "application/zip")
@@ -274,7 +343,7 @@ def audit_view(store, sid, config):
 
 def recommendations(store, sid, config):
     audit = choose_audit(store, sid)
-    st.caption("Review state never grants website permission. Record only independently approved and externally implemented actions. The app has no CMS write integration.")
+    st.caption("Review state never grants publication permission. Agents may revise verified isolated staging and report changes; live changes need exact approval. The app has no CMS write integration.")
     if audit:
         aid = audit["id"]
         documents = {label: name for label, name in (
@@ -288,14 +357,18 @@ def recommendations(store, sid, config):
             if audit["status"] == "partial":
                 st.warning("This audit is incomplete. Read its collection limits before deciding on changes; missing evidence does not prove the website is healthy.")
             label = st.radio("Review document", list(documents), horizontal=True, key=sid + ":review:" + aid)
+            if label == "Proposed edits":
+                page_previews(store, sid, aid)
             path = store.audit_file(sid, aid, "reports", documents[label])
             if path.stat().st_size <= 2 * 1024 * 1024:
                 content = path.read_text(encoding="utf-8")
-                st.text(content)  # Inert report text, including imported links/HTML.
+                formatted_report(content)
                 st.download_button("Download this review document", content, documents[label], "text/markdown")
             else:
                 st.warning("This review document exceeds the display limit.")
-            st.info("Reading a report or saving a local draft does not approve a website change. Confirm the facts and approve the exact actions separately.")
+            st.info("Reading a report or saving a local draft does not approve a published change. Staging recommendations may be revised on a verified separate copy. Confirm the facts and approve exact live actions separately.")
+        else:
+            page_previews(store, sid, aid)
         findings = store.findings(sid, aid)
         st.subheader("Automated findings")
         if not findings:
@@ -346,6 +419,7 @@ MAX_PHRASE_TEXT = 250000
 
 def main():
     st.set_page_config(page_title="Local SEO workspace", layout="wide")
+    st.html(app_css())
     st.title("Local SEO workspace")
     st.caption("One user · read-only collection · site-scoped evidence · local proposed edits")
     try:
@@ -376,6 +450,10 @@ def main():
         setup(store, None, None)
         return
     config = store.site(sid)
+    try:
+        st.html(app_css(load_appearance(store, sid)))
+    except (ValueError, KeyError, TypeError):
+        st.sidebar.caption("Site appearance unavailable; readable default in use.")
     st.subheader("Selected site")
     st.text(labels[sid])
     if view == "Setup":

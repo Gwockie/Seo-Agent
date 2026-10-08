@@ -83,7 +83,7 @@ Make **basic recommendation generation part of v1**, using transparent rules and
 
 Every item stores: priority P0–P3, category, affected URLs/queries, evidence file/rows, impact/confidence/effort 1–5, proposed action, factual confirmations, measurement method, and status. Low-data or ambiguous findings should be labeled as diagnostic leads rather than certain causes. Several pages appearing for a query is a review signal, not automatic evidence of harmful cannibalization.
 
-Use `proposed -> reviewed -> implemented -> verified`, plus `dismissed`. Record factual confirmation and exact-action approval separately; reviewing a recommendation does not authorize a website change. Imported narrative reports can retain human judgment without pretending it came from automated rules.
+Use `proposed -> reviewed -> implemented -> verified`, plus `dismissed`. Record factual confirmation and exact-action production approval separately; reviewing a recommendation does not authorize publication. Agents may iterate on verified isolated staging and disclose each batch under the current [website-change policy](website-change-policy.md). Imported narrative reports can retain human judgment without pretending it came from automated rules.
 
 Generate the existing three report types from the selected site's goals: executive summary, recommendations, and proposed edits. An unrelated business's summary should discuss its own target services, rather than asking whether Google understands ADHD assessment.
 

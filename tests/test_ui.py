@@ -192,6 +192,52 @@ class UITests(unittest.TestCase):
         self.assertTrue([button for button in app.button if button.label == "Run read-only audit"][0].disabled)
         load.assert_not_called()
 
+    def test_new_site_imports_appearance_once_and_demo_stays_offline(self):
+        with patch("seo_agent.appearance.capture_appearance") as capture:
+            app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+            for label, value in (("Business name", "New site"), ("Final public URL", "https://new.example/"), ("Exact Search Console property", "sc-domain:new.example")):
+                [field for field in app.text_input if field.label == label][0].set_value(value)
+            [button for button in app.button if button.label == "Save local profile"][0].click().run()
+            app.run()
+        self.assertFalse(app.exception)
+        capture.assert_called_once()
+        self.assertTrue(capture.call_args.kwargs["demo"])
+        self.assertEqual(self.store.site(capture.call_args.args[1]).name, "New site")
+
+    def test_page_previews_stay_with_selected_site_and_keep_approval_requirement(self):
+        from seo_agent.previews import save_preview
+        from tests.test_review_previews import fixture
+        sid = self.ids["Demo psychology A"]
+        aid = self.store.audits(sid)[0]["id"]
+        save_preview(self.store, sid, aid, fixture(sid, aid, self.store.site(sid).url))
+        app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+        app.sidebar.selectbox[0].select(sid).run()
+        app.sidebar.radio[0].set_value("Recommendations & changes").run()
+        self.assertTrue(any(box.label == "Page to compare" for box in app.selectbox))
+        self.assertTrue(any("separate approval" in info.value for info in app.info))
+        self.assertEqual(len(app.get("iframe")), 1)
+        [r for r in app.radio if r.label == "Page display"][0].set_value("Side by side").run()
+        self.assertEqual(len(app.get("iframe")), 2)
+        app.sidebar.selectbox[0].select(self.ids["Demo electrician"]).run()
+        self.assertFalse(any(box.label == "Page to compare" for box in app.selectbox))
+        self.assertFalse(app.exception)
+
+    def test_site_appearance_switches_without_leaking_previous_fonts(self):
+        from seo_agent.appearance import save_appearance
+        from tests.test_review_previews import fixture
+        a, b = self.ids["Demo psychology A"], self.ids["Demo electrician"]
+        for sid, font, accent in ((a, "Cambria", "#ac7658"), (b, "Verdana", "#245ba1")):
+            appearance = fixture(sid, self.store.audits(sid)[0]["id"], self.store.site(sid).url)["appearance"]
+            appearance.update(heading_font=font, accent=accent)
+            save_appearance(self.store, sid, appearance)
+        app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+        app.sidebar.selectbox[0].select(a).run()
+        self.assertTrue(any("Cambria" in e.proto.body for e in app.get("html")))
+        app.sidebar.selectbox[0].select(b).run()
+        self.assertTrue(any("Verdana" in e.proto.body for e in app.get("html")))
+        self.assertFalse(any("Cambria" in e.proto.body for e in app.get("html")))
+        self.assertFalse(app.exception)
+
 
 if __name__ == "__main__":
     unittest.main()
