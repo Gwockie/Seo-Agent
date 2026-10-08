@@ -1,9 +1,11 @@
-# Live-audit follow-up and operator handoff
+# Live-audit follow-up and next setup step
 
 "Operator" means you: the person using this app on your Windows computer.
 Windows permissions control which computer accounts can open the private files.
-Encryption protects the saved files if someone accesses the drive. The app checks
-both before using private Google data. These checks have not passed yet.
+Encryption protects the saved files if someone accesses the drive. You approved
+making disk encryption optional for local use. Restricted folder access remains
+required before using private Google data; this check has not passed yet. See the
+[current local storage policy](local-storage-policy.md).
 
 You do not need to work through the migration commands yourself. Once Windows
 storage protection is confirmed, the agent can configure the original practice,
@@ -16,6 +18,12 @@ audit, credential migration, OAuth consent or website/Search Console mutation.
 This note contains no private practice data or account identity.
 
 ## Starting point and reviewable fixes
+
+The initial MVP and the first follow-up were committed and merged to `main` in
+[PR #1](https://github.com/Gwockie/Seo-Agent/pull/1). The dated validation below
+records that earlier checkpoint; it is retained as historical evidence. The
+subsequent encryption-policy change keeps access checks mandatory and reports
+encryption separately. Plaintext files no longer block approved local operation.
 
 The primary checkout was on the pre-MVP `main` branch. The requested follow-up
 prompt and working MVP were located on `codex/multi-site-seo-mvp`. Work continued
@@ -80,13 +88,30 @@ Their presence does not establish current Google access or authorized identity.
   read-only fingerprint comparison, with no new files in those roots. No original
   evidence file was moved or rewritten.
 
-## Next operator step
+## Next setup step
+
+Subsequent user-approved policy validation: **58 tests passed** in 32.944 seconds,
+including an unencrypted-access Store regression, an explicit encryption diagnostic
+and an AppTest check that a missing account keeps collection disabled. Dependency,
+compilation and whitespace checks passed. A real loopback browser check displayed
+the updated access warning and optional-encryption notice without exposing private
+setup/audit controls. The temporary server/tab were closed and no private workspace
+was created. Read-only checks still found broad permissions on the credential and
+historical folders. No folder permissions, original files, Google credentials or
+website settings were changed; live access remains untested.
+
+A reviewed folder-only permission plan is prepared locally. The next step is your
+approval to restrict `secrets`, `data`, `reports` and a new `workspace/private` to
+your Windows account, SYSTEM and Administrators, with saved permissions for
+rollback and original-file hash verification. No encryption is required. Once
+access passes, the agent can perform the explicit setup/migration sequence below.
 
 Configure an **existing protected workspace** and protect the original `secrets`,
 `data` and `reports` folders **including their existing contents** using normal
 Windows tools. Allow access only to the operator, SYSTEM and Administrators;
-verify EFS on every entry or fully encrypted BitLocker with protection On. An
-inaccessible encryption check remains a blocker. Do not move/delete the legacy
+disk encryption is optional. An inaccessible or broad access check remains a
+blocker. An agent can make a reviewed, reversible folder-only change with your
+approval; you do not need to understand or run the commands yourself. Do not move/delete the legacy
 token or rewrite historical folders. If using an external workspace, substitute
 its actual path consistently in every command below.
 

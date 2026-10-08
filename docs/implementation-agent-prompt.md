@@ -2,6 +2,10 @@
 
 Prepared October 7, 2026.
 
+Subsequent user approval makes disk encryption optional for local operation.
+[The current local storage policy](local-storage-policy.md) supersedes earlier
+encryption requirements; restricted folder access and credential safeguards remain.
+
 ## Recommended session settings
 
 - Model: **GPT-6.1 Sol** (`gpt-6.1-sol`).

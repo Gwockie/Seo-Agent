@@ -2,6 +2,11 @@
 
 Prepared October 7, 2026. This is a local implementation plan, not authorization to change any website or Search Console property.
 
+Subsequent user approval makes disk encryption optional for local operation,
+including local backups. [The current local storage policy](local-storage-policy.md)
+supersedes the initial encryption requirements below. Access restrictions,
+OS-backed credentials and exact-action website approvals remain mandatory.
+
 ## Recommendation
 
 Build a small, local, single-user SEO workspace around the existing Python audit engine. Open it in a browser on this Windows computer, choose a site, run an audit, review recommendations, and compare results. Keep the current command-line workflow working.

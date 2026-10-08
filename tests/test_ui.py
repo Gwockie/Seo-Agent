@@ -126,6 +126,22 @@ class UITests(unittest.TestCase):
         self.assertFalse(app.sidebar.selectbox)
         self.assertFalse(any(b.label == "Run read-only audit" for b in app.button))
 
+    def test_unencrypted_local_setup_keeps_audit_disabled_without_account(self):
+        sid = self.ids["Demo electrician"]
+        config = self.store.site(sid)
+        config.connection_id = None
+        self.store.save_site(config, sid)
+        status = {"verified": True, "encrypted": False, "encryption_required": False,
+                  "reason": "Restricted folder access verified. Disk encryption is optional for this local app."}
+        with patch.dict(os.environ, {"SEO_DEMO": "0"}), patch("seo_agent.protection.storage_status", return_value=status), patch("seo_agent.credentials.load_connection") as load:
+            app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+            app.sidebar.selectbox[0].select(sid).run()
+            self.assertTrue(any("encryption is optional" in info.value for info in app.info))
+            app.sidebar.radio[0].set_value("Overview & audits").run()
+        self.assertFalse(app.exception)
+        self.assertTrue([button for button in app.button if button.label == "Run read-only audit"][0].disabled)
+        load.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

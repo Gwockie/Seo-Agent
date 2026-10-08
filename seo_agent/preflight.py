@@ -44,4 +44,4 @@ def setup_status(workspace: Path, secrets: Path, legacy_root: Path) -> dict:
             pass
     return {"storage": storage, "credential_backend": backend, "desktop_client_format_valid": client_ok,
             "legacy_token": token, "live_ready": False,
-            "next_step": "Verify workspace and credential storage first. Then explicitly seed/select the original site, create a new connection ID, validate Google property access and register protected history. This diagnostic does not authorize or prove live access."}
+            "next_step": "Verify restricted access to workspace, credentials and historical folders first; local disk encryption is optional. Then explicitly seed/select the original site, create a new connection ID, validate Google property access and register protected history. This diagnostic does not authorize or prove live access."}

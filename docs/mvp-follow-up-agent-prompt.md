@@ -14,6 +14,13 @@ authorize spawning agents or creating a separate chat.
 
 ## Copyable prompt
 
+User-approved local storage policy: disk encryption is optional for this
+single-user app. Read `docs/local-storage-policy.md`; it supersedes earlier
+mandatory encryption requirements. Restricted Windows folder access, OS-backed
+Google credentials, browser protections, read-only scopes and exact website
+approval requirements remain mandatory. Do not silently change folder permissions
+or machine-wide settings.
+
 Continue this repository's working local multi-site SEO MVP toward a first
 verified live audit of the original Paoli practice. The near-term goal is to
 return to that practice's discoverability work, with only necessary local app

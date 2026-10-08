@@ -6,6 +6,8 @@ Search Console property/sitemap mutation, deployment or indexing request was mad
 This records the initial MVP worktree. See
 [live-audit follow-up](mvp-live-audit-follow-up.md) for the primary checkout's
 subsequent local fixes, validation, discovered assets and remaining prerequisites.
+The [approved local storage policy](local-storage-policy.md) now makes disk
+encryption optional; historical encryption failures below are baseline results.
 
 ## Implemented
 

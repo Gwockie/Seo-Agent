@@ -34,10 +34,12 @@ and reports are ignored by Git. No audits or credentials are bundled.
 ## Before real client data
 
 Read [setup and migration](docs/setup-and-migration.md). Private writes, live
-collection, credential setup/migration and backup require verified operator-only
-Windows ACLs and EFS or protected BitLocker storage. An unavailable check fails
-closed. SQLite itself is not encrypted. The launcher uses loopback, CORS/XSRF
-protections and disabled telemetry; this is a single-operator tool.
+collection, credential setup/migration and local backup require verified Windows
+folder access restricted to your account, SYSTEM and Administrators. Disk
+encryption is optional under the [approved local policy](docs/local-storage-policy.md).
+An unavailable access check fails closed. SQLite itself is not encrypted. The
+launcher uses loopback, CORS/XSRF protections and disabled telemetry; this is a
+single-user tool.
 
 Google tokens use exactly the validated Windows WinVaultKeyring backend, with no
 plaintext fallback. Each connection has its own generated ID; reconnecting one
@@ -74,7 +76,7 @@ Read-only setup diagnostics create no workspace/database and never refresh token
 
 Opening the live app stops before creating private files when protection fails.
 Checks cover existing descendants, not just the parent directory. See the
-[follow-up validation and operator handoff](docs/mvp-live-audit-follow-up.md).
+[follow-up validation and next setup step](docs/mvp-live-audit-follow-up.md).
 
 For configured sites:
 

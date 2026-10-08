@@ -57,15 +57,39 @@ class FollowUpTests(unittest.TestCase):
             self.assertFalse(target.exists())
         self.assertEqual(credential_location(repo / "secrets"), repo / "secrets")
 
-    def test_storage_checks_fail_for_descendant_acl_plaintext_and_reparse(self):
+    def test_storage_checks_fail_for_descendant_acl_and_reparse(self):
         good = {"acl": True, "encrypted": True, "checked_entries": 2, "broad_acl_entries": 0, "unencrypted_entries": 0, "reparse_entries": 0, "bitlocker": "verified"}
-        for updates in ({}, {"acl": False, "broad_acl_entries": 1}, {"encrypted": False, "unencrypted_entries": 1}, {"reparse_entries": 1}, {"acl": "true"}, {"checked_entries": 10001}):
+        for updates in ({}, {"acl": False, "broad_acl_entries": 1}, {"reparse_entries": 1}, {"acl": "true"}, {"checked_entries": 10001}):
             result = Mock(stdout=json.dumps({**good, **updates}))
             with patch("seo_agent.protection.os.name", "nt"), patch("seo_agent.protection.subprocess.run", return_value=result) as run:
                 status = storage_status(self.root)
             self.assertEqual(status["verified"], not bool(updates))
             self.assertEqual(run.call_args.kwargs["env"]["SEO_CHECK_PATH"], str(self.root))
             self.assertNotIn(str(self.root), run.call_args.args[0][-1])
+
+    def test_local_access_passes_without_encryption_but_opt_in_check_fails(self):
+        plain = {"acl": True, "encrypted": False, "checked_entries": 2, "broad_acl_entries": 0, "unencrypted_entries": 2, "reparse_entries": 0, "bitlocker": "unknown"}
+        with patch("seo_agent.protection.os.name", "nt"), patch("seo_agent.protection.subprocess.run", return_value=Mock(stdout=json.dumps(plain))):
+            local = storage_status(self.root)
+            strict = storage_status(self.root, require_encryption=True)
+            missing = storage_status(self.root / "missing", require_encryption=True)
+            # Exercise the actual Store gate: only synthetic metadata is written.
+            store = Store(self.root / "workspace", enforce_protection=True)
+        self.assertTrue(local["verified"])
+        self.assertFalse(local["encrypted"])
+        self.assertFalse(local["encryption_required"])
+        self.assertIn("optional", local["reason"])
+        self.assertFalse(strict["verified"])
+        self.assertTrue(strict["encryption_required"])
+        self.assertFalse(missing["verified"])
+        self.assertTrue(missing["encryption_required"])
+        self.assertTrue((store.root / "app.sqlite").is_file())
+
+    def test_cli_encryption_check_is_explicit_and_read_only(self):
+        with patch("sys.argv", ["seo_agent", "storage-check", "--path", str(self.root), "--require-encryption"]), patch("seo_agent.__main__.Store") as factory, patch("seo_agent.protection.storage_status", return_value={"verified": False}) as check, redirect_stdout(io.StringIO()):
+            self.assertEqual(main(), 1)
+        check.assert_called_once_with(self.root, require_encryption=True)
+        factory.assert_not_called()
 
     def test_missing_directory_and_unavailable_probe_do_not_pass(self):
         with patch("seo_agent.protection.subprocess.run", side_effect=subprocess.TimeoutExpired("powershell", 30)):
