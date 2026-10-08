@@ -1,5 +1,9 @@
 # Guided setup and a local learning journal
 
+This page describes the implemented journal. The agreed next step, including
+automatic receipts, outside-change detection and charts with update markers, is in
+[the end-to-end workflow](seo-change-workflow.md), with two separate agent prompts.
+
 Setup uses editable lists rather than JSON entry. Main fields have help tooltips.
 Click a table cell to edit it, add a row at the bottom or select a row to delete,
 then use the matching Save button.
