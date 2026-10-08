@@ -84,6 +84,12 @@ CREATE TABLE IF NOT EXISTS recommendations(id TEXT PRIMARY KEY, site_id TEXT NOT
 CREATE TABLE IF NOT EXISTS change_events(id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id), date TEXT NOT NULL,
  action TEXT NOT NULL, url TEXT NOT NULL, prior_value TEXT NOT NULL, proposed_value TEXT NOT NULL,
  approval_reference TEXT NOT NULL, evidence TEXT NOT NULL, verification TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS change_plans(id TEXT PRIMARY KEY, site_id TEXT NOT NULL, audit_id TEXT NOT NULL,
+ created TEXT NOT NULL, payload TEXT NOT NULL, change_id TEXT REFERENCES change_events(id),
+ FOREIGN KEY(audit_id,site_id) REFERENCES audits(id,site_id), UNIQUE(id,site_id));
+CREATE TABLE IF NOT EXISTS result_reviews(id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES change_plans(id),
+ site_id TEXT NOT NULL, audit_id TEXT NOT NULL, created TEXT NOT NULL, payload TEXT NOT NULL,
+ FOREIGN KEY(audit_id,site_id) REFERENCES audits(id,site_id), FOREIGN KEY(plan_id,site_id) REFERENCES change_plans(id,site_id));
 PRAGMA user_version=1;
 """
 
@@ -92,12 +98,16 @@ class Store:
     def __init__(self, root: Path, *, legacy_root: Path | None = None, enforce_protection=False):
         self.enforce_protection = enforce_protection
         self.root = private_location(root)
+        self.initial_protection = None
+        existed = self.root.exists()
         if self.enforce_protection:
             from .protection import require_protected, existing_ancestor
             # Gate even empty directory/database creation, not only saved profiles.
-            require_protected(existing_ancestor(self.root))
+            self.initial_protection = require_protected(existing_ancestor(self.root))
         self.root.mkdir(parents=True, exist_ok=True)
-        self.require_private_write()
+        if self.enforce_protection and not existed:
+            # A newly created root needs its own check before database creation.
+            self.initial_protection = require_protected(self.root)
         self.legacy_root = (legacy_root or Path(__file__).resolve().parent.parent).resolve()
         self.db_path = child_path(self.root, "app.sqlite")
         with self.db() as db:
@@ -276,10 +286,13 @@ class Store:
         if url and not within_site(config.url, url):
             raise ValueError("Change URL is outside the selected site")
         values = (date, action, url, prior_value, proposed_value, approval_reference, evidence, verification)
-        if not action.strip() or any(len(v) > 4000 for v in values):
+        limits = (4000, 4000, 4000, 8000, 8000, 4000, 4000, 4000)
+        if not action.strip() or any(len(v) > limit for v, limit in zip(values, limits)):
             raise ValueError("Invalid change record")
         with self.db() as db:
-            db.execute("INSERT INTO change_events VALUES (?,?,?,?,?,?,?,?,?,?)", (new_id(), sid, *values))
+            cid = new_id()
+            db.execute("INSERT INTO change_events VALUES (?,?,?,?,?,?,?,?,?,?)", (cid, sid, *values))
+        return cid
 
     def changes(self, sid):
         self.site(sid)

@@ -34,12 +34,12 @@ $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $allowed = @($sid, 'S-1-5-18', 'S-1-5-32-544')
 $disk = $false
 $diskState = 'unknown'
-try {
+if ($env:SEO_REQUIRE_ENCRYPTION -eq '1') { try {
     $drive = [IO.Path]::GetPathRoot($p).TrimEnd('\')
     $vol = Get-BitLockerVolume -MountPoint $drive -ErrorAction Stop
     $disk = ($vol.ProtectionStatus -eq 'On' -and $vol.VolumeStatus -eq 'FullyEncrypted')
     $diskState = if ($disk) { 'verified' } else { 'not-protected' }
-} catch {}
+} catch {} }
 $queue = New-Object 'System.Collections.Generic.Queue[string]'
 $queue.Enqueue($p)
 $checked = 0; $badAcl = 0; $plain = 0; $reparse = 0
@@ -67,7 +67,7 @@ while ($queue.Count -gt 0) {
     try:
         # Windows PowerShell 5 cannot load inherited PowerShell 7 module paths.
         modules = str(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "Modules")
-        result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], env={**os.environ, "SEO_CHECK_PATH": str(path), "PSModulePath": modules}, capture_output=True, text=True, timeout=30, check=True)
+        result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], env={**os.environ, "SEO_CHECK_PATH": str(path), "SEO_REQUIRE_ENCRYPTION": "1" if require_encryption else "0", "PSModulePath": modules}, capture_output=True, text=True, timeout=30, check=True)
         status = json.loads(result.stdout)
         if not isinstance(status, dict) or any(type(status.get(k)) is not bool for k in ("acl", "encrypted")) or any(type(status.get(k)) is not int or status[k] < 0 for k in ("checked_entries", "broad_acl_entries", "unencrypted_entries", "reparse_entries")) or not 1 <= status["checked_entries"] <= 10000:
             raise ValueError("Invalid protection response")
@@ -92,3 +92,4 @@ def require_protected(path: Path, *, require_encryption: bool = False):
     result = storage_status(path, require_encryption=require_encryption)
     if not result["verified"]:
         raise ProtectionError(result["reason"])
+    return result

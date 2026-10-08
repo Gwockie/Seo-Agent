@@ -66,6 +66,23 @@ class FollowUpTests(unittest.TestCase):
             self.assertEqual(status["verified"], not bool(updates))
             self.assertEqual(run.call_args.kwargs["env"]["SEO_CHECK_PATH"], str(self.root))
             self.assertNotIn(str(self.root), run.call_args.args[0][-1])
+            self.assertEqual(run.call_args.kwargs["env"]["SEO_REQUIRE_ENCRYPTION"], "0")
+
+    def test_store_rechecks_each_open_and_write_without_duplicate_existing_root_check(self):
+        target = self.root / "gated-existing"
+        target.mkdir()
+        status = {"verified": True, "reason": "Verified"}
+        with patch("seo_agent.protection.require_protected", return_value=status) as probe:
+            store = Store(target, enforce_protection=True)
+            self.assertEqual(probe.call_count, 1)
+            self.assertEqual(store.initial_protection, status)
+            Store(target, enforce_protection=True)
+            self.assertEqual(probe.call_count, 2)
+            store.add_connection("Synthetic")
+            self.assertEqual(probe.call_count, 3)
+        with patch("seo_agent.protection.require_protected", side_effect=ProtectionError("Changed ACL")):
+            with self.assertRaises(ProtectionError):
+                Store(target, enforce_protection=True)
 
     def test_local_access_passes_without_encryption_but_opt_in_check_fails(self):
         plain = {"acl": True, "encrypted": False, "checked_entries": 2, "broad_acl_entries": 0, "unencrypted_entries": 2, "reparse_entries": 0, "bitlocker": "unknown"}

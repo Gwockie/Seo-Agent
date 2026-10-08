@@ -8,6 +8,10 @@ running at that address, use that browser page rather than starting another
 server. This starter uses port 8502 to avoid the older development app; the CLI's
 default port remains 8501.
 
+With one saved site and audit history, a fresh session now opens its review view.
+For help tooltips, editable setup lists and the Changes & results journal, see
+[guided setup and learning](guided-setup-and-learning.md).
+
 1. Select your practice in the sidebar.
 2. Open **Recommendations & changes** and select the saved audit.
 3. In **Review together**, start with **Summary**, then **Recommendations**.
