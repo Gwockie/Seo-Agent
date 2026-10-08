@@ -178,3 +178,12 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(load_preview(self.store, self.sid, self.aid, revision=1), self.bundle)
         with self.assertRaises(FileExistsError):
             save_preview(self.store, self.sid, self.aid, newer, revision=2)
+
+    def test_frame_declares_utf8_for_both_documents(self):
+        self.bundle["pages"][0]["tree"]["children"].append({"text": "We’ll review — together."})
+        document = page_document(self.bundle, self.bundle["pages"][0])
+        wrapper = BeautifulSoup(preview_frame(document), "html.parser")
+        self.assertEqual(wrapper.head.find("meta")["charset"], "utf-8")
+        inner = BeautifulSoup(wrapper.iframe["srcdoc"], "html.parser")
+        self.assertEqual(inner.head.find("meta")["charset"], "utf-8")
+        self.assertIn("We’ll review — together.", inner.get_text())

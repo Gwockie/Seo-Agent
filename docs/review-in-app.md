@@ -65,10 +65,10 @@ in backups. New captures/proposals use new revisions rather than overwriting the
 earlier page evidence. **Proposed** is the initial display; choose **Before** or
 **Side by side** to compare.
 
-The appearance/preview update passed **80 tests**, including eleven Streamlit
-AppTest scenarios, in 24.561 seconds. Checks cover site/audit separation, current
+The appearance/preview update passed **81 tests**, including eleven Streamlit
+AppTest scenarios, in 25.359 seconds. Checks cover site/audit separation, current
 value matching, inert report markup, empty iframe sandbox permissions, external
-resource removal, preservation of surrounding page structure, capture revisions,
+resource removal, UTF-8 in both preview documents, preservation of surrounding page structure, capture revisions,
 and credential-free backup/restore of appearance and preview artifacts. Runtime
 dependencies and lock files did not change.
 
@@ -106,3 +106,10 @@ diagnosis first. Any proposed security setting change needs its own exact-action
 approval. After a completed response is available, run a fresh bounded audit
 without overwriting the old one. This collection issue does not prevent reviewing
 the available Google evidence together.
+
+The user identified SiteGround as the host. A concrete support request is:
+“Please investigate why read-only requests to our site's `/robots.txt` using
+`LocalSEOAudit/2.0 (authorized read-only audit)` receive HTTP 202 and challenge
+HTML instead of a completed robots response. Please diagnose the cause first and
+describe any proposed setting changes before making them.” No support request was
+sent and no hosting/security setting was changed by this work.

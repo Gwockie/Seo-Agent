@@ -48,6 +48,7 @@ def protection_for_ui(store):
 
 
 def formatted_report(content):
+    st.caption("Saved reports retain their original wording. The current staging and publication policy shown in the app supersedes older approval wording.")
     st.html(report_html(content))
     with st.expander("Original report text"):
         st.text(content)
