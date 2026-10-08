@@ -74,10 +74,10 @@ def rows_to_df(rows: list[dict], dimensions: list[str]) -> pd.DataFrame:
     for row in rows:
         record = dict(zip(dimensions, row.get("keys", [])))
         record.update(
-            clicks=row.get("clicks", 0),
-            impressions=row.get("impressions", 0),
-            ctr=row.get("ctr", 0),
-            position=row.get("position", 0),
+            clicks=row.get("clicks"),
+            impressions=row.get("impressions"),
+            ctr=row.get("ctr"),
+            position=row.get("position"),
         )
         records.append(record)
     return pd.DataFrame(records, columns=dimensions + ["clicks", "impressions", "ctr", "position"])
@@ -103,6 +103,7 @@ def export_performance(
         "queries": ["query"],
         "pages": ["page"],
         "daily": ["date"],
+        "daily_pages": ["date", "page"],
         "device": ["device"],
         "country": ["country"],
     }
@@ -123,7 +124,7 @@ def export_performance(
         "lag_days": lag_days,
     }]).to_csv(out_dir / "gsc_window.csv", index=False)
 
-    return {"start": start_s, "end": end_s, "counts": counts, "data_state": "final", "search_type": "web", "timezone": "America/Los_Angeles", "row_limit": 50000, "aggregation": "byPage for page dimensions; otherwise byProperty", "top_rows_only": True}
+    return {"start": start_s, "end": end_s, "counts": counts, "data_state": "final", "search_type": "web", "timezone": "America/Los_Angeles", "row_limit": 50000, "aggregation": "byPage for page dimensions; otherwise byProperty", "daily_pages_aggregation": "byPage", "top_rows_only": True}
 
 def list_sitemaps(secret_dir: Path, site_url: str, *, svc=None) -> list[dict]:
     svc = svc or services(secret_dir)

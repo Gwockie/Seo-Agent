@@ -16,6 +16,7 @@ MAX_IMPORT = 2 * 1024 * 1024
 PHRASE_FIELDS = ["site_id", "phrase", "group", "related_terms", "location", "priority", "landing_page", "active"]
 DATA_FILES = {"manifest.json", "gsc_sitemaps.json", "reviewed-page-observations.json", "review-preview.json", "crawl.csv", "opportunities.csv", "url_inspection.csv", "gsc_window.csv", *{"gsc_" + n + ".csv" for n in ("totals", "query_page", "queries", "pages", "daily", "device", "country")}}
 DATA_FILES.update(f"review-preview-v{revision}.json" for revision in range(2, 21))
+DATA_FILES.add("gsc_daily_pages.csv")
 
 
 def backup_evidence_path(relative, kind):
@@ -156,9 +157,20 @@ def seed_original(store, *, name, url, property_url, connection_id=None):
 def report_packet(store, sid, aid):
     """Selected audit only. Raw CSV evidence stays local; exported CSV is escaped."""
     store.audit(sid, aid)
+    if store.enforce_protection:
+        from .protection import require_protected
+        require_protected(store.root)
+        for kind in ("data", "reports"):
+            require_protected(store.audit_file(sid, aid, kind, "manifest.json").parent)
     buffer = io.BytesIO()
     total_size = 0
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        from .tracking import packet
+        supplement = packet(store, sid, aid)
+        if len(supplement) > 40 * 1024 * 1024:
+            raise ValueError("Tracking packet exceeds export limit")
+        archive.writestr("tracking.json", supplement)
+        total_size += len(supplement)
         for kind in ("data", "reports"):
             sample = store.audit_file(sid, aid, kind, "manifest.json" if kind == "data" else "snapshot.md")
             for path in sorted(sample.parent.rglob("*")):

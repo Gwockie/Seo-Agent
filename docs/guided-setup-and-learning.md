@@ -3,6 +3,9 @@
 This page describes the implemented journal. The agreed next step, including
 automatic receipts, outside-change detection and charts with update markers, is in
 [the end-to-end workflow](seo-change-workflow.md), with two separate agent prompts.
+Those tracking features are now implemented; see
+[the current tracking guide](automatic-change-tracking.md). The earlier journal
+instructions below remain supported and are historical validation notes.
 
 Setup uses editable lists rather than JSON entry. Main fields have help tooltips.
 Click a table cell to edit it, add a row at the bottom or select a row to delete,

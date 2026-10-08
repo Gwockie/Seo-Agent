@@ -41,12 +41,12 @@ class AuditContext:
 def run_lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+b") as handle:
-        handle.seek(0)
-        if not handle.read(1):
-            handle.write(b"0")
-            handle.flush()
-        handle.seek(0)
         try:
+            handle.seek(0)
+            if not handle.read(1):
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
             if os.name == "nt":
                 import msvcrt
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
@@ -54,7 +54,7 @@ def run_lock(path: Path):
                 import fcntl
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            raise ValueError("An audit is already running; wait for it to finish") from None
+            raise ValueError("An audit, tracking check or backup is already running; wait for it to finish") from None
         try:
             yield
         finally:
@@ -190,6 +190,10 @@ def run_site(store: Store, site_id, *, request_id=None, expected_config_hash=Non
             manifest = {"status": "failed", "synthetic": demo, "message": "Audit could not complete. Preserved stages are diagnostic only."}
             store.finish_audit(site_id, aid, "failed", manifest)
             raise ValueError("Audit failed; preserved partial evidence is available in history") from None
+        from .page_tracking import refresh
+        from .trends import ingest_audits
+        ingest_audits(store, site_id)
+        refresh(store, site_id, demo=demo, audit_id=aid, progress=progress, already_locked=True)
         return aid
 
 
@@ -226,10 +230,31 @@ class Jobs:
             result = {"site_id": record["site_id"], "progress": record["progress"], "done": record["future"].done()}
             if result["done"]:
                 try:
-                    result["audit_id"] = record["future"].result()
+                    value = record["future"].result()
+                    if record.get("kind") == "tracking":
+                        result["tracking"] = value
+                    else:
+                        result["audit_id"] = value
                 except Exception:
                     result["error"] = "Audit unavailable or failed. Check secure storage, connection, property and preserved history."
             return result
+
+    def submit_check(self, store, sid, request_id, *, manual=False, demo=False):
+        from .page_tracking import refresh
+        key = (str(store.root), sid, "tracking:" + request_id)
+        with self.guard:
+            if key in self.records:
+                return key
+            if self.current and not self.records[self.current]["future"].done():
+                raise ValueError("An audit or tracking check is already running")
+            record = {"site_id": sid, "request_id": request_id, "progress": "Queued read-only tracking check", "kind": "tracking"}
+            self.records[key] = record
+            self.current = key
+            def update(message):
+                with self.guard:
+                    record["progress"] = str(message)[:200]
+            record["future"] = self.executor.submit(refresh, store, sid, manual=manual, demo=demo, progress=update)
+        return key
 
     def busy(self):
         with self.guard:

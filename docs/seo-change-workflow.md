@@ -1,7 +1,8 @@
 # Website changes, trends and learning
 
-Agreed workflow, October 8, 2026. This document describes the next implementation;
-it does not claim that the features below already exist or authorize publication.
+Agreed workflow, October 8, 2026. Tracking is now implemented as documented in
+[usage and receipt contracts](automatic-change-tracking.md); implementation does
+not authorize publication. The table below preserves the planning baseline.
 
 The user wants to review recommendations with their wife in the app, approve exact
 published changes, and see subsequent SEO trends alongside a reliable history of

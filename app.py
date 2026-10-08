@@ -23,6 +23,7 @@ from seo_agent.runner import Jobs
 from seo_agent.storage import Store, new_id
 from seo_agent.setup_fields import service_rows, services_from_rows, facts_from_rows, rule_rows, overrides_from_rows, phrase_rows, phrases_from_rows
 from seo_agent.learning import METRICS, create_plan, plans, link_change, compare, save_review, reviews, explanation
+from seo_agent import tracking_ui
 
 ROOT = Path(__file__).resolve().parent
 DEMO = os.environ.get("SEO_DEMO") == "1"
@@ -346,20 +347,29 @@ def audit_view(store, sid, config):
         column.metric(label, "Unavailable" if value is None else f"{value:.2%}" if field == "ctr" else f"{value:,.2f}")
     st.caption("Property totals use byProperty aggregation. Query and page totals are separate datasets; do not add them together.")
     daily = frame("gsc_daily") if success else pd.DataFrame()
-    changes = store.changes(sid)
+    from seo_agent.trends import markers as trend_markers
+    changes = [{"date": m["date"], "action": m["label"], "verification": m["type"]} for m in trend_markers(store, sid)]
     if not daily.empty:
+        dates = manifest.get("windows", {}).get("current", {})
+        if dates and not daily["date"].duplicated().any():
+            labels = pd.date_range(dates["start"], dates["end"]).strftime("%Y-%m-%d")
+            daily = daily.set_index("date").reindex(labels).rename_axis("date").reset_index()
+        daily["segment"] = daily["impressions"].isna().cumsum()
         # GSC's ISO dates are calendar labels in Pacific time, not instants.
         # Keep their date components with a UTC scale; browser-local formatting
         # would shift midnight ISO input into the prior day in US time zones.
         reporting_date = alt.X("date:T", title="Pacific reporting date", scale=alt.Scale(type="utc"), axis=alt.Axis(format="%Y-%m-%d"))
         date_tooltip = alt.Tooltip("date:N", title="Pacific reporting date")
-        line = alt.Chart(daily).mark_line(point=True).encode(x=reporting_date, y="impressions:Q", tooltip=[date_tooltip, "clicks:Q", "impressions:Q"])
+        line = alt.Chart(daily).mark_line(point=True).encode(x=reporting_date, y="impressions:Q", detail="segment:N", tooltip=[date_tooltip, "clicks:Q", "impressions:Q"])
         if changes:
             markers = alt.Chart(pd.DataFrame(changes)).mark_rule(color="orange").encode(x=reporting_date, tooltip=[date_tooltip, "action:N", "verification:N"])
             st.altair_chart(line + markers, width="stretch")
         else:
             st.altair_chart(line, width="stretch")
     st.caption("Change dates are observations alongside performance; they do not establish causality.")
+    if st.button("Explore persistent trends and exact change details", key=sid + ":open_trends"):
+        st.session_state["pending_view"] = "Changes & results"
+        st.rerun()
     st.write("Visible query groups (query-only byProperty data)")
     table(query_groups(frame("gsc_queries") if success else pd.DataFrame(), saved_config), hide_index=True)
     st.write("Exact target phrases (missing visible rows are unknown)")
@@ -395,6 +405,7 @@ def recommendations(store, sid, config):
     st.caption("Review state never grants publication permission. Agents may revise verified isolated staging and report changes; live changes need exact approval. The app has no CMS write integration.")
     if audit:
         aid = audit["id"]
+        tracking_ui.proposals(store, sid, aid)
         documents = {label: name for label, name in (
             ("Summary", "reviewed-executive-summary.md"),
             ("Recommendations", "reviewed-recommendations.md"),
@@ -490,6 +501,8 @@ def recommendations(store, sid, config):
 
 def change_results(store, sid, config):
     st.subheader("Changes & results")
+    tracking_ui.settings_ui(store, sid)
+    tracking_ui.charts(store, sid, demo=DEMO)
     st.info("A saved plan is a hypothesis. It does not approve or publish a website change. Record what was actually published, then compare later evidence. This journal preserves lessons for you and future audits; it does not automatically change audit rules.")
     audits = store.audits(sid)
     if not audits:
@@ -628,6 +641,7 @@ def main():
         setup(store, None, None)
         return
     config = store.site(sid)
+    tracking_ui.controls(store, sid, jobs(), demo=DEMO)
     try:
         st.html(app_css(load_appearance(store, sid)))
     except (ValueError, KeyError, TypeError):
