@@ -60,10 +60,17 @@ Legacy token migration copies and validates, never deletes or rewrites the origi
   pages; bounded, explicitly site-associated CSV import/export.
 - **Overview & audits:** bounded manual collection, progress, source failures,
   history, property metrics, daily trends, query groups, landing pages, inspection,
-  equal complete comparison windows and literal report viewing/export.
+  equal complete comparison windows and safely formatted report viewing/export.
 - **Recommendations & changes:** rule/version and own-site CSV row evidence,
   impact/confidence/effort, confirmations and measurement; local drafts, review
   states and independently approved change observations. State is not approval.
+
+New sites import their public colors and typography automatically, with a visible
+fallback when access is blocked and a refresh control in Setup. Prepared local
+page copies provide before/after review with highlighted differences. See
+[reviewing together](docs/review-in-app.md). Agents may iterate on verified isolated
+staging; publishing or affecting production requires exact approval under the
+[website-change policy](docs/website-change-policy.md). This app has no CMS writer.
 
 CTR is calculated from total clicks/impressions; aggregate position is impression
 weighted within the same dataset. Property totals are separate from query/page

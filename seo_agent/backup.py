@@ -11,6 +11,7 @@ from .protection import require_protected
 from .storage import Store, child_path, checked_id, config_hash, private_location
 from .config import SiteConfig
 from .import_export import backup_evidence_path
+from .appearance import appearance_path, load_appearance
 
 MAX_BACKUP_BYTES = 200 * 1024 * 1024
 
@@ -41,6 +42,13 @@ def _backup(store, destination):
             z.write(dbpath, "metadata.sqlite")
             for site in store.sites():
                 sid = site["id"]
+                appearance = appearance_path(store, sid)
+                if appearance.is_file():
+                    load_appearance(store, sid)  # Validate site identity and inert format.
+                    total += appearance.stat().st_size
+                    if total > MAX_BACKUP_BYTES:
+                        raise ValueError("Backup size limit exceeded")
+                    z.write(appearance, f"sites/{sid}/appearance.json")
                 for audit in store.audits(sid):
                     aid = audit["id"]
                     for kind in ("data", "reports"):
@@ -82,6 +90,9 @@ def _restore(archive, root):
                 raise ValueError("Unsafe archive path")
             if info.filename not in {"backup.json", "metadata.sqlite"}:
                 parts = p.parts
+                if len(parts) == 3 and parts[0] == "sites" and parts[2] == "appearance.json":
+                    checked_id(parts[1])
+                    continue
                 if len(parts) not in (6, 7) or parts[0] != "sites" or parts[2] != "audits" or parts[4] not in ("data", "reports"):
                     raise ValueError("Unexpected archive contents")
                 checked_id(parts[1]); checked_id(parts[3])
@@ -116,4 +127,7 @@ def _restore(archive, root):
             reports = child_path(root, "sites", sid, "audits", aid, "reports")
             data.mkdir(parents=True, exist_ok=True); reports.mkdir(parents=True, exist_ok=True)
             db.execute("UPDATE audits SET data_path=?,reports_path=?,legacy=0 WHERE id=? AND site_id=?", (str(data), str(reports), aid, sid))
-    return Store(root)
+    store = Store(root)
+    for site in store.sites():
+        load_appearance(store, site["id"])
+    return store

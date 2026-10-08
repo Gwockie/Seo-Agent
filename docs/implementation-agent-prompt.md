@@ -30,13 +30,13 @@ The app is for one operator on a local Windows computer, initially serving two p
 
 ### Authorized scope and boundaries
 
-This prompt authorizes local application implementation, required project dependencies, local test fixtures and documentation. It does not authorize website changes, CMS/staging/draft/autosave writes, deployment, DNS changes, plugin installation on websites, or changes to Search Console properties. Preserve all exact-action approval requirements in `AGENTS.md`.
+This prompt authorizes local application implementation, required project dependencies, local test fixtures and documentation. Follow the user's current `docs/website-change-policy.md`: agents may iterate on verified isolated staging and report each batch. Publication, production-impacting changes, deployment, DNS and production plugins require approval of exact actions. Preserve the app's read-only Search Console connection and all production approval requirements in `AGENTS.md`.
 
 Search Console access must remain exactly:
 
 `https://www.googleapis.com/auth/webmasters.readonly`
 
-No sitemap submissions/deletions, indexing requests or scope expansion. Never fabricate business facts, clinical qualifications, testing instruments, insurance coverage, outcomes, reviews or testimonials. Never create mass location pages. Do not upload private audits or credentials to GitHub, a model provider or another service.
+The app must not submit/delete sitemaps, request indexing or expand OAuth scopes. Separately authorized indexing/sitemap operations require exact permission and appropriate access as described in the website-change policy. Never fabricate business facts, clinical qualifications, testing instruments, insurance coverage, outcomes, reviews or testimonials. Never create mass location pages. Do not upload private audits or credentials to GitHub, a model provider or another service.
 
 Do not discard the existing CLI, replace a working account token with another account's token, rewrite historical evidence, or delete the legacy token during migration. Prepare any token cleanup as a separately reviewable local step after successful migration. Local credential-store access remains subject to this session's filesystem/tool permissions; if it is unavailable, implement and test the adapter safely and report the precise setup limitation.
 

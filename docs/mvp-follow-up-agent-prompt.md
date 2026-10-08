@@ -88,10 +88,13 @@ Proceed in this order:
    actual checks, remaining blockers and Git state; do not repeat passing checks
    without a new reason.
 
-Website implementation still requires explicit human approval of exact actions.
-Do not write to CMS/staging/drafts/autosaves, publish, change DNS/plugins/redirects,
-create mass location pages, alter Search Console properties/sitemaps or request
-indexing. The only OAuth scope is
+Follow the current `docs/website-change-policy.md`: recommended edits on verified
+isolated staging are authorized, with each batch explicitly reported. Publication
+and changes that can affect production require explicit human approval of exact
+actions. Do not assume a production draft/autosave is isolated. Until staging is
+verified, use local previews. Do not create mass location pages or alter Search
+Console properties. Indexing/sitemap actions require their own explicit permission
+and separately authorized access. The app's only OAuth scope remains
 `https://www.googleapis.com/auth/webmasters.readonly`. Local proposed edits and
 recommendation review state are not approval. Do not upload private evidence or
 credentials to GitHub, model providers or other services. Do not add hosting,
