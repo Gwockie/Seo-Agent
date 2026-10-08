@@ -1,5 +1,10 @@
 # Follow-up after the multi-site MVP
 
+For the next October 8 tasks, use the [agreed change-to-results workflow](seo-change-workflow.md)
+and its prompts for [tracking implementation](change-tracking-agent-prompt.md) and
+[Meadow & Mind's audit](meadow-and-mind-agent-prompt.md). The checkpoints below
+describe the initial follow-up; do not repeat completed setup because of them.
+
 Prepared October 7, 2026. Start from branch `codex/multi-site-seo-mvp`, or the
 main branch once that implementation is merged. Verify Git state before editing.
 
