@@ -323,12 +323,12 @@ MAX_PHRASE_TEXT = 250000
 def main():
     st.set_page_config(page_title="Local SEO workspace", layout="wide")
     st.title("Local SEO workspace")
-    st.caption("One operator · read-only collection · site-scoped evidence · local proposed edits")
+    st.caption("One user · read-only collection · site-scoped evidence · local proposed edits")
     try:
         store = Store(WORKSPACE, enforce_protection=not DEMO)
     except ProtectionError as exc:
         st.warning(str(exc))
-        st.info("Live setup and collection are disabled. Verify the workspace's permissions and encryption, then restart the app. Existing evidence and credentials remain in place.")
+        st.info("Live setup and collection are disabled. Restrict access to the private app folders, then restart the app. Disk encryption is optional for local use. Existing evidence and credentials remain in place.")
         st.code(f'python -m seo_agent --workspace "{WORKSPACE}" storage-check', language="powershell")
         st.caption("See docs/setup-and-migration.md. Use python -m seo_agent app --demo for synthetic validation.")
         return

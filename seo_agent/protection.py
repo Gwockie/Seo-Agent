@@ -1,4 +1,4 @@
-"""Read-only Windows ACL/encryption verification. Never changes machine policy."""
+"""Read-only Windows access verification with optional encryption diagnostics."""
 import json
 import os
 from pathlib import Path
@@ -16,15 +16,16 @@ def existing_ancestor(path: Path) -> Path:
     return path
 
 
-def storage_status(path: Path) -> dict:
+def storage_status(path: Path, *, require_encryption: bool = False) -> dict:
     path = path.resolve()
     if not path.exists():
         parent = existing_ancestor(path)
-        status = storage_status(parent)
+        status = storage_status(parent, require_encryption=require_encryption)
         return {**status, "verified": False, "exists": False, "checked_path": str(parent), "parent_reason": status["reason"],
                 "reason": "Directory does not exist. The existing parent must pass protection before workspace creation."}
     if os.name != "nt":
-        return {"verified": False, "exists": True, "reason": "Live private data requires verified Windows ACLs and EFS/BitLocker storage."}
+        return {"verified": False, "exists": True, "encryption_required": require_encryption,
+                "reason": "Private local data requires verified Windows folder access restricted to your account, Windows SYSTEM and Administrators."}
     # Pass path as an environment value, never interpolate it into PowerShell.
     script = r'''
 $ErrorActionPreference = 'Stop'
@@ -71,12 +72,23 @@ while ($queue.Count -gt 0) {
         if not isinstance(status, dict) or any(type(status.get(k)) is not bool for k in ("acl", "encrypted")) or any(type(status.get(k)) is not int or status[k] < 0 for k in ("checked_entries", "broad_acl_entries", "unencrypted_entries", "reparse_entries")) or not 1 <= status["checked_entries"] <= 10000:
             raise ValueError("Invalid protection response")
     except (OSError, subprocess.SubprocessError, ValueError):
-        return {"verified": False, "exists": True, "reason": "Windows storage protection could not be verified; live auditing and private backup are disabled."}
-    verified = status["acl"] and status["encrypted"] and not any(status[k] for k in ("broad_acl_entries", "unencrypted_entries", "reparse_entries"))
-    return {**status, "verified": verified, "exists": True, "reason": "Storage protection verified for this directory and its existing contents." if verified else "Live private data requires operator-only ACLs and verified EFS or fully protected BitLocker for every existing entry; reparse points are rejected. See setup documentation."}
+        return {"verified": False, "exists": True, "encryption_required": require_encryption,
+                "reason": "Windows folder access could not be verified; live auditing and private backup are disabled."}
+    access_verified = status["acl"] and not any(status[k] for k in ("broad_acl_entries", "reparse_entries"))
+    encryption_verified = status["encrypted"] and status["unencrypted_entries"] == 0
+    verified = access_verified and (encryption_verified or not require_encryption)
+    if not access_verified:
+        reason = "Folder access must be restricted to your Windows account, SYSTEM and Administrators for every existing entry. Reparse points are rejected. See setup documentation."
+    elif require_encryption and not encryption_verified:
+        reason = "Folder access passed, but the requested encryption check requires EFS on every entry or fully protected BitLocker. Encryption could not be verified."
+    elif encryption_verified:
+        reason = "Restricted folder access and encryption verified for this directory and its existing contents."
+    else:
+        reason = "Restricted folder access verified. Disk encryption is optional for this local app and was not verified; saved files may be unencrypted."
+    return {**status, "verified": verified, "exists": True, "encryption_required": require_encryption, "reason": reason}
 
 
-def require_protected(path: Path):
-    result = storage_status(path)
+def require_protected(path: Path, *, require_encryption: bool = False):
+    result = storage_status(path, require_encryption=require_encryption)
     if not result["verified"]:
         raise ProtectionError(result["reason"])

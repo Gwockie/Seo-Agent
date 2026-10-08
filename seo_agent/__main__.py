@@ -67,6 +67,7 @@ def main():
     restore_cmd.add_argument('new_workspace', type=Path)
     check = sub.add_parser('storage-check', help='Read-only protection diagnostic; creates no files')
     check.add_argument('--path', type=Path, help='Check another existing asset directory')
+    check.add_argument('--require-encryption', action='store_true', help='Also require verified EFS/BitLocker; optional for local operation')
     sub.add_parser('setup-check', help='Read-only prerequisite summary; never refreshes or prints credentials')
     args = p.parse_args()
     if args.command == 'app':
@@ -79,7 +80,7 @@ def main():
     if args.command == 'storage-check':
         from .storage import private_location
         target = args.path if args.path is not None else private_location(args.workspace)
-        result = storage_status(target)
+        result = storage_status(target, require_encryption=args.require_encryption)
         print(json.dumps(result, indent=2))
         return 0 if result['verified'] else 1
     if args.command == 'setup-check':
@@ -189,7 +190,7 @@ def main():
     elif args.command == 'backup':
         from .backup import backup
         backup(store, args.destination)
-        print('Credential-free private backup created. Keep it on verified encrypted storage.')
+        print('Credential-free private backup created on access-restricted storage. The ZIP is unencrypted; protect it before moving it off this computer.')
     return 0
 
 

@@ -1,6 +1,6 @@
 # Local app setup and migration
 
-Supported MVP: one operator, Windows, Python 3.13, loopback browser. There is no
+Supported MVP: one user, Windows, Python 3.13, loopback browser. There is no
 deployment, CMS client, AI provider, schedule, conversion integration or paid data
 source. Website actions require the exact approval process in `AGENTS.md`.
 
@@ -40,14 +40,15 @@ chosen directory passes the read-only Windows check:
 ```
 
 The check requires Allow ACL entries limited to the current Windows user, SYSTEM
-and Administrators, and either an EFS-encrypted directory or a fully encrypted
-BitLocker volume with protection On. An inaccessible encryption check is unknown,
-not verified. SQLite/CSV/Markdown are ordinary private files, not encrypted by
-keyring. Use a user-managed protected local directory; verify existing contents,
-permissions and encryption there. Do not put patient records in this app.
+and Administrators. Disk encryption is optional under the
+[user-approved local policy](local-storage-policy.md). Encryption is reported
+separately; an inaccessible encryption check is unknown, not proof the disk is
+unencrypted. SQLite/CSV/Markdown are ordinary private files, not encrypted by
+keyring. Use a local directory with verified restricted access, including its
+existing contents. Do not put patient records in this app.
 
-Verification includes every existing descendant's ACL and encryption. Encrypting
-only a directory does not verify pre-existing plaintext files. Reparse points,
+Verification includes every existing descendant's ACL. Encryption diagnostics
+also cover existing files. Reparse points,
 inaccessible entries, more than 10,000 entries, or a 30-second verification timeout
 fail closed. The command creates no directory or SQLite file. A missing workspace
 reports its existing parent's status but does not count as verified; configure an
@@ -68,10 +69,13 @@ account identity or certify live readiness. The live UI stops before loading
 private profiles or creating workspace artifacts if protection is unavailable.
 
 The app does not change ACLs, enable encryption or modify machine-wide settings.
-An operator or administrator must configure storage through their normal Windows
-tools. OS account compromise, admin access and shared Windows sessions remain
-outside the isolation boundary. Backups must stay on independently verified
-encrypted storage; the ZIP format itself is not encryption.
+You or an authorized agent/administrator can configure folder access through
+normal Windows tools after reviewing the exact scope and rollback plan. OS account
+compromise, admin access and shared Windows sessions remain outside the isolation
+boundary. Local backups require independently verified restricted access. Protect
+copies before moving them off this computer; the ZIP format itself is not encryption.
+Use `storage-check --path PATH --require-encryption` if you want verification of
+EFS on every entry or fully encrypted BitLocker with protection On as well.
 
 Use a configured private workspace, including with the UI launcher:
 
@@ -222,7 +226,7 @@ show observations alongside performance without claiming causality.
 .\.venv-mvp\Scripts\python.exe -m seo_agent restore 'D:\EncryptedBackups\seo-backup.zip' 'D:\ProtectedSEO\restored'
 ```
 
-Backup requires protected source/destination directories, excludes OAuth client
+Backup requires access-restricted source/destination directories, excludes OAuth client
 files/tokens, and retains profiles, evidence, reports, states and changes, including
 registered legacy evidence. It also preserves saved HTML/text page captures,
 robots/sitemap evidence and historical validation metadata as inert files. Report
