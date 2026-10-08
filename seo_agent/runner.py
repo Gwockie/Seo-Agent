@@ -113,8 +113,11 @@ def run_snapshot(context: AuditContext, svc, *, progress=None, crawl_fn=crawl):
         stage("sitemaps", sitemaps)
     crawled = stage("crawl", lambda: crawl_fn(ctx.config.url, ctx.data_dir / "crawl.csv", max_pages=ctx.max_pages, config=ctx.config, progress=progress))
     if crawled is not None and not crawled.empty and "status" in crawled:
-        if crawled.status.astype(str).isin(["request_error"]).any():
+        unavailable = crawled.status.astype(str).isin(["request_error", "blocked_by_robots"]) | pd.to_numeric(crawled.status, errors="coerce").eq(202)
+        if unavailable.any():
             stages["crawl"]["status"] = "partial"
+            stages["crawl"]["unavailable_page_count"] = int(unavailable.sum())
+            stages["crawl"]["message"] = "Some public page content was unavailable; request failures, robots restrictions or HTTP 202 responses cannot establish page content or indexing health."
     if ctx.inspect and svc is not None:
         priorities = list(dict.fromkeys(p.landing_page for p in ctx.config.phrases if p.active and p.landing_page))
         other = [] if crawled is None or "final_url" not in crawled else crawled.loc[crawled["status"].astype(str).eq("200"), "final_url"].dropna().tolist()

@@ -126,7 +126,7 @@ class FollowUpTests(unittest.TestCase):
         reports.mkdir(parents=True)
         (data / "manifest.json").write_text(json.dumps({"url": "https://original.example/", "site": "https://original.example/", "created_utc": data.name}))
         (data / "pages").mkdir()
-        captures = {"pages/service.html": b"<script>UNTRUSTED_CAPTURE</script>", "pages/service.txt": b"Original public text", "robots.txt": b"User-agent: *", "page-sitemap.xml": b"<urlset/>", "validation.json": b'{"historical":true}'}
+        captures = {"pages/service.html": b"<script>UNTRUSTED_CAPTURE</script>", "pages/service.txt": b"Original public text", "robots.txt": b"User-agent: *", "page-sitemap.xml": b"<urlset/>", "validation.json": b'{"historical":true}', "reviewed-page-observations.json": b'{"reviewed":true,"text":"UNTRUSTED_CAPTURE"}'}
         for name, raw in captures.items():
             (data / name).write_bytes(raw)
         (reports / "executive-summary.md").write_text("Original narrative")
@@ -159,6 +159,51 @@ class FollowUpTests(unittest.TestCase):
                 restored.finish_audit(sid, old, "complete", {})
         self.assertEqual(before, {p: p.read_bytes() for p in before})
 
+    def test_public_legacy_uses_folder_time_and_preserves_timestamp_source(self):
+        store = Store(self.root / "workspace", legacy_root=self.root)
+        sid = seed_original(store, name="Synthetic original", url="https://original.example/", property_url="https://original.example/")
+        data = self.root / "data" / "public-20261005T190725Z"
+        reports = self.root / "reports" / data.name
+        data.mkdir(parents=True); reports.mkdir(parents=True)
+        source = {"kind": "public_crawl_only", "site_url": "https://original.example/", "collected_date": "2026-10-05"}
+        manifest = data / "manifest.json"
+        manifest.write_text(json.dumps(source))
+        raw = manifest.read_bytes()
+        with self.assertRaises(ValueError):
+            register_legacy(store, sid, data, reports)
+        aid = register_legacy(store, sid, data, reports, associate=True)
+        row = store.audit(sid, aid)
+        saved = json.loads(row["manifest"])
+        self.assertEqual(row["created"], "2026-10-05T19:07:25+00:00")
+        self.assertEqual(row["status"], "legacy-public-only")
+        self.assertFalse(saved["gsc_available"])
+        self.assertEqual(saved["source"], source)
+        self.assertIn("snapshot folder UTC", saved["collection_time_source"])
+        self.assertEqual(manifest.read_bytes(), raw)
+
+    def test_public_legacy_rejects_other_site_and_conflicting_date(self):
+        store = Store(self.root / "workspace", legacy_root=self.root)
+        sid = seed_original(store, name="Synthetic original", url="https://original.example/", property_url="https://original.example/")
+        data = self.root / "data" / "public-20261005T190725Z"
+        reports = self.root / "reports" / data.name
+        data.mkdir(parents=True); reports.mkdir(parents=True)
+        for source in ({"site_url": "https://other.example/", "collected_date": "2026-10-05"}, {"url": "https://original.example/", "site_url": "https://other.example/"}, {"site_url": "https://original.example/", "collected_date": "2026-10-06"}):
+            (data / "manifest.json").write_text(json.dumps(source))
+            with self.assertRaises(ValueError):
+                register_legacy(store, sid, data, reports, associate=True)
+            self.assertFalse(store.audits(sid))
+
+    def test_legacy_without_timestamp_does_not_invent_import_date(self):
+        store = Store(self.root / "workspace", legacy_root=self.root)
+        sid = seed_original(store, name="Synthetic original", url="https://original.example/", property_url="https://original.example/")
+        data = self.root / "data" / "unknown-time"
+        reports = self.root / "reports" / data.name
+        data.mkdir(parents=True); reports.mkdir(parents=True)
+        (data / "manifest.json").write_text(json.dumps({"url": "https://original.example/", "site": "https://original.example/"}))
+        with self.assertRaises(ValueError):
+            register_legacy(store, sid, data, reports)
+        self.assertFalse(store.audits(sid))
+
     def test_snapshot_rejects_prior_outputs_before_network_or_writes(self):
         config = SiteConfig(name="Synthetic", url="https://original.example/", gsc_property="https://original.example/")
         data, reports = self.root / "data", self.root / "reports"
@@ -172,6 +217,22 @@ class FollowUpTests(unittest.TestCase):
         crawler.assert_not_called()
         service.searchanalytics.assert_not_called()
         self.assertEqual(existing.read_text(), "Historical evidence")
+
+    def test_unavailable_public_pages_keep_live_snapshot_partial(self):
+        import pandas as pd
+        config = SiteConfig(name="Synthetic", url="https://original.example/", gsc_property="https://original.example/")
+        for i, status in enumerate((202, "202", "blocked_by_robots", "request_error")):
+            ctx = AuditContext(new_id(), new_id(), config, self.root / f"data-{i}", self.root / f"reports-{i}")
+            def unavailable_crawl(url, path, **kwargs):
+                frame = pd.DataFrame([{"url": url, "final_url": url, "status": status}])
+                frame.to_csv(path, index=False)
+                return frame
+            manifest, _ = run_snapshot(ctx, SyntheticService(config), crawl_fn=unavailable_crawl)
+            self.assertEqual(manifest["stages"]["gsc_current"]["status"], "complete")
+            self.assertEqual(manifest["stages"]["crawl"]["status"], "partial")
+            self.assertEqual(manifest["stages"]["crawl"]["unavailable_page_count"], 1)
+            self.assertEqual(manifest["status"], "partial")
+            self.assertIn("unavailable", (ctx.reports_dir / "executive-summary.md").read_text())
 
     def test_select_connection_changes_only_named_site_after_access_validation(self):
         store = Store(self.root / "workspace")
