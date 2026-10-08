@@ -9,13 +9,26 @@ import pandas as pd
 from googleapiclient.discovery import build
 
 from .auth import get_credentials
+from .config import validate_property
 
 ROW_LIMIT = 25_000
 
 def services(secret_dir: Path):
     creds = get_credentials(secret_dir)
-    searchconsole = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
-    return searchconsole
+    return service_for_credentials(creds)
+
+
+def service_for_credentials(creds):
+    from .credentials import validate_credentials
+    validate_credentials(creds)
+    return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+
+
+def validate_access(svc, property_url, public_url):
+    validate_property(property_url, public_url)
+    entries = svc.sites().list().execute().get("siteEntry", [])
+    if not any(r.get("siteUrl") == property_url and r.get("permissionLevel") in {"siteOwner", "siteFullUser", "siteRestrictedUser"} for r in entries):
+        raise ValueError("Selected Google connection lacks access to the exact property")
 
 def list_sites(secret_dir: Path) -> list[dict]:
     svc = services(secret_dir)
@@ -40,6 +53,7 @@ def _query_all(
             "startRow": start_row,
             "dataState": data_state,
             "type": "web",
+            "aggregationType": "byPage" if "page" in dimensions else "byProperty",
         }
         resp = svc.searchanalytics().query(siteUrl=site_url, body=body).execute()
         rows = resp.get("rows", [])
@@ -74,15 +88,17 @@ def export_performance(
     out_dir: Path,
     days: int = 90,
     lag_days: int = 3,
+    *, svc=None, start_date=None, end_date=None,
 ) -> dict:
-    svc = services(secret_dir)
+    svc = svc or services(secret_dir)
     if days < 1 or lag_days < 0:
         raise ValueError("days must be positive and lag_days must be nonnegative")
     end = datetime.now(ZoneInfo("America/Los_Angeles")).date() - timedelta(days=lag_days)
     start = end - timedelta(days=days - 1)
-    start_s, end_s = start.isoformat(), end.isoformat()
+    start_s, end_s = start_date or start.isoformat(), end_date or end.isoformat()
 
     datasets = {
+        "totals": [],
         "query_page": ["query", "page"],
         "queries": ["query"],
         "pages": ["page"],
@@ -107,10 +123,10 @@ def export_performance(
         "lag_days": lag_days,
     }]).to_csv(out_dir / "gsc_window.csv", index=False)
 
-    return {"start": start_s, "end": end_s, "counts": counts}
+    return {"start": start_s, "end": end_s, "counts": counts, "data_state": "final", "search_type": "web", "timezone": "America/Los_Angeles", "row_limit": 50000, "aggregation": "byPage for page dimensions; otherwise byProperty", "top_rows_only": True}
 
-def list_sitemaps(secret_dir: Path, site_url: str) -> list[dict]:
-    svc = services(secret_dir)
+def list_sitemaps(secret_dir: Path, site_url: str, *, svc=None) -> list[dict]:
+    svc = svc or services(secret_dir)
     return svc.sitemaps().list(siteUrl=site_url).execute().get("sitemap", [])
 
 def inspect_urls(
@@ -119,9 +135,9 @@ def inspect_urls(
     urls: Iterable[str],
     out_path: Path,
     limit: int = 100,
+    *, svc=None,
 ) -> int:
-    creds = get_credentials(secret_dir)
-    inspection = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+    inspection = svc or services(secret_dir)
     records = []
     for i, url in enumerate(dict.fromkeys(urls)):
         if i >= limit:
@@ -149,7 +165,7 @@ def inspect_urls(
                 "crawled_as": idx.get("crawledAs"),
                 "referring_urls": " | ".join(idx.get("referringUrls", [])),
             })
-        except Exception as exc:
-            records.append({"url": url, "error": str(exc)})
-    pd.DataFrame(records).to_csv(out_path, index=False)
+        except Exception:
+            records.append({"url": url, "error": "Google inspection unavailable; check access/quota/connectivity"})
+    pd.DataFrame(records, columns=["url", "verdict", "coverage_state", "robots_txt_state", "indexing_state", "last_crawl_time", "page_fetch_state", "google_canonical", "user_canonical", "crawled_as", "referring_urls", "error"]).to_csv(out_path, index=False)
     return len(records)

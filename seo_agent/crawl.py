@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET
 from collections import deque, defaultdict
 from urllib.parse import urljoin, urlsplit, urlunsplit, urldefrag
 from urllib.robotparser import RobotFileParser
@@ -12,7 +12,8 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-UA = "LocalSEOAuditBot/0.1 (owner-authorized site audit)"
+from .public_fetch import PublicFetcher, UA
+from .config import public_url, within_site
 
 def normalize_url(url: str) -> str:
     url, _ = urldefrag(url)
@@ -41,6 +42,8 @@ def get_robot_parser(root_url: str, session: requests.Session) -> RobotFileParse
 
 def safe_get(url: str, root_url: str, session: requests.Session, rp: RobotFileParser):
     """Check host and robots rules before every request, including redirect targets."""
+    if isinstance(session, PublicFetcher):
+        return session.get(url, rp=rp)
     for _ in range(10):
         if not same_host(root_url, url) or not rp.can_fetch(UA, url):
             raise ValueError("Request or redirect blocked by host boundary or robots.txt")
@@ -76,7 +79,7 @@ def sitemap_urls(sitemap_url: str, session: requests.Session, max_sitemaps: int 
             r = safe_get(sm, root_url, session, rp)
             if not r.ok or "xml" not in (r.headers.get("content-type", "") + sm):
                 continue
-            root = ET.fromstring(r.content)
+            root = ET.fromstring(r.content, forbid_dtd=True, forbid_entities=True, forbid_external=True)
         except Exception:
             continue
         kind = root.tag.rsplit("}", 1)[-1]
@@ -89,6 +92,8 @@ def sitemap_urls(sitemap_url: str, session: requests.Session, max_sitemaps: int 
                         q.append(loc)
                     elif kind == "urlset":
                         found_urls.add(loc)
+                        if len(found_urls) >= 1000:
+                            return found_urls
     return found_urls
 
 def _jsonld_types(soup: BeautifulSoup) -> list[str]:
@@ -115,13 +120,13 @@ def _jsonld_types(soup: BeautifulSoup) -> list[str]:
                 stack.extend(obj)
     return sorted(types)
 
-def analyze_html(url: str, final_url: str, status: int, html: str) -> tuple[dict, set[str]]:
+def analyze_html(url: str, final_url: str, status: int, html: str, config=None) -> tuple[dict, set[str]]:
     soup = BeautifulSoup(html, "html.parser")
-    title = soup.title.get_text(" ", strip=True) if soup.title else ""
+    title = soup.title.get_text(" ", strip=True)[:1000] if soup.title else ""
     desc = ""
     tag = soup.find("meta", attrs={"name": re.compile("^description$", re.I)})
     if tag:
-        desc = tag.get("content", "").strip()
+        desc = tag.get("content", "").strip()[:2000]
     robots = ""
     tag = soup.find("meta", attrs={"name": re.compile("^robots$", re.I)})
     if tag:
@@ -134,7 +139,7 @@ def analyze_html(url: str, final_url: str, status: int, html: str) -> tuple[dict
     headings = {}
     for level in range(1, 7):
         vals = [h.get_text(" ", strip=True) for h in soup.find_all(f"h{level}")]
-        headings[f"h{level}"] = " | ".join(v for v in vals if v)
+        headings[f"h{level}"] = " | ".join(v for v in vals if v)[:5000]
 
     for bad in soup(["script", "style", "noscript", "svg"]):
         bad.decompose()
@@ -175,17 +180,18 @@ def analyze_html(url: str, final_url: str, status: int, html: str) -> tuple[dict
     }
     return row, internal_links
 
-def crawl(root_url: str, out_csv, max_pages: int = 200, delay: float = 0.25) -> pd.DataFrame:
-    root_url = normalize_url(root_url)
+def crawl(root_url: str, out_csv, max_pages: int = 200, delay: float = 0.25, *, config=None, progress=None) -> pd.DataFrame:
+    root_url = public_url(normalize_url(root_url))
     if urlsplit(root_url).scheme not in ("http", "https") or not urlsplit(root_url).netloc:
         raise ValueError("Website URL must be an absolute http(s) URL.")
-    session = requests.Session()
-    session.headers.update({"User-Agent": UA})
+    if not 1 <= max_pages <= 200:
+        raise ValueError("Crawl must be bounded to 1–200 pages")
+    session = PublicFetcher(root_url, max_requests=min(max_pages * 3 + 60, 660))
     rp = get_robot_parser(root_url, session)
 
     seeds = {root_url}
     for sm in discover_sitemaps(root_url, rp):
-        seeds |= {u for u in sitemap_urls(sm, session, root_url=root_url, rp=rp) if same_host(root_url, u)}
+        seeds |= {u for u in sitemap_urls(sm, session, max_sitemaps=10, root_url=root_url, rp=rp) if same_host(root_url, u) and within_site(root_url, u)}
 
     q = deque([root_url] + sorted(seeds - {root_url}))
     seen = set()
@@ -198,7 +204,7 @@ def crawl(root_url: str, out_csv, max_pages: int = 200, delay: float = 0.25) -> 
 
     while q and len(seen) < max_pages:
         url = q.popleft()
-        if url in seen or not same_host(root_url, url):
+        if url in seen or not same_host(root_url, url) or not within_site(root_url, url):
             continue
         if not rp.can_fetch(UA, url):
             seen.add(url)
@@ -216,15 +222,21 @@ def crawl(root_url: str, out_csv, max_pages: int = 200, delay: float = 0.25) -> 
             rows.append({"url": url, "final_url": resp.url, "status": resp.status_code, "content_type": ctype})
             continue
 
-        row, links = analyze_html(url, resp.url, resp.status_code, resp.text)
+        row, links = analyze_html(url, resp.url, resp.status_code, resp.text, config=config)
+        if config is not None:
+            for key in ("text_mentions_paoli", "text_mentions_adhd", "text_mentions_assessment"):
+                row.pop(key, None)
+            row["configured_location_present"] = bool(config.location and config.location.casefold() in BeautifulSoup(resp.text, "html.parser").get_text(" ", strip=True).casefold())
         row["content_type"] = ctype
         row["x_robots_tag"] = resp.headers.get("X-Robots-Tag", "")
         row["internal_link_urls"] = json.dumps(sorted(links))
         rows.append(row)
         for link in links:
             inbound[link] += 1
-            if link not in seen:
+            if link not in seen and len(q) < max_pages * 10:
                 q.append(link)
+        if progress:
+            progress(f"Crawled {len(seen)} / {max_pages} bounded pages")
         time.sleep(delay)
 
     df = pd.DataFrame(rows)
@@ -238,4 +250,5 @@ def crawl(root_url: str, out_csv, max_pages: int = 200, delay: float = 0.25) -> 
                 & df["meta_description"].fillna("").ne("")
             )
     df.to_csv(out_csv, index=False)
+    session.close()
     return df

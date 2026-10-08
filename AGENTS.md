@@ -1,9 +1,16 @@
 # Local SEO Agent Instructions
 
-You are working on a local SEO auditing system for a mental-health practice. Auditing
-is read-only; website implementation requires explicit user approval.
+You are working on a local multi-site SEO auditing system. Select an explicit site
+and audit; its app-validated profile, facts and saved rules are the source of truth.
+Each site keeps independent goals, evidence and account references. General sites
+must not inherit psychology advice or the original practice's location/phrases.
+Auditing is read-only; website implementation requires explicit user approval.
 
 ## Core objective
+
+The following phrase list and objective belong only to the original Paoli practice.
+They are preserved faithfully in `seo_agent.config.LEGACY_PHRASES` and seeded only
+through explicit original-site setup. Other sites use their own configured goals.
 
 Determine why the practice is not sufficiently visible in Google for local searches, especially:
 
@@ -115,6 +122,7 @@ Create:
 Answer:
 - Why is the site underperforming?
 - Does Google understand the ADHD assessment offering?
+  (For another site, answer this for its own configured priority offering.)
 - Are there indexing problems?
 - What are the 5 highest-value opportunities?
 - What appears solvable on-site vs off-site?
