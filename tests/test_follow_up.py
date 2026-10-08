@@ -234,6 +234,22 @@ class FollowUpTests(unittest.TestCase):
             self.assertEqual(manifest["status"], "partial")
             self.assertIn("unavailable", (ctx.reports_dir / "executive-summary.md").read_text())
 
+    def test_incomplete_robots_stops_crawl_but_preserves_google_evidence(self):
+        config = SiteConfig(name="Synthetic", url="https://original.example/", gsc_property="https://original.example/")
+        ctx = AuditContext(new_id(), new_id(), config, self.root / "data", self.root / "reports")
+        fetcher = Mock()
+        fetcher.get.return_value = Mock(status_code=202, ok=True, text="CAPTCHA_REQUIRED")
+        with patch("seo_agent.crawl.PublicFetcher", return_value=fetcher):
+            manifest, _ = run_snapshot(ctx, SyntheticService(config))
+        fetcher.get.assert_called_once_with("https://original.example/robots.txt", timeout=15)
+        fetcher.close.assert_called_once()
+        self.assertEqual(manifest["stages"]["crawl"]["status"], "failed")
+        self.assertIn("robots.txt", manifest["stages"]["crawl"]["message"])
+        self.assertEqual(manifest["stages"]["gsc_current"]["status"], "complete")
+        self.assertEqual(manifest["status"], "partial")
+        self.assertTrue((ctx.data_dir / "gsc_totals.csv").is_file())
+        self.assertFalse((ctx.data_dir / "crawl.csv").exists())
+
     def test_select_connection_changes_only_named_site_after_access_validation(self):
         store = Store(self.root / "workspace")
         old, new = store.add_connection("Old"), store.add_connection("New")

@@ -118,6 +118,39 @@ class UITests(unittest.TestCase):
         self.assertNotIn(payload, [text.value for text in app.text])
         self.assertFalse(app.exception)
 
+    def test_review_view_uses_selected_audit_and_keeps_reports_inert(self):
+        sid = self.ids["Demo psychology A"]
+        aid = self.store.audits(sid)[0]["id"]
+        summary = 'SUMMARY_SENTINEL ![untrusted](https://external.example/image)'
+        edits = 'EDITS_SENTINEL <script>untrusted()</script>'
+        for name, content in (("reviewed-executive-summary.md", summary), ("reviewed-proposed-edits.md", edits)):
+            self.store.audit_file(sid, aid, "reports", name).write_text(content, encoding="utf-8")
+        with self.store.db() as db:
+            db.execute("UPDATE audits SET status='partial' WHERE id=?", (aid,))
+        newer = run_site(self.store, sid, demo=True, max_pages=5)
+        before = self.store.changes(sid)
+        app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+        app.sidebar.selectbox[0].select(sid).run()
+        app.sidebar.radio[0].set_value("Recommendations & changes").run()
+        self.assertFalse(any(r.label == "Review document" for r in app.radio))
+        [box for box in app.selectbox if box.label == "Audit"][0].select(aid).run()
+        review = [radio for radio in app.radio if radio.label == "Review document"][0]
+        self.assertEqual(review.value, "Summary")
+        self.assertIn(summary, [text.value for text in app.text])
+        self.assertTrue(any("audit is incomplete" in w.value for w in app.warning))
+        review.set_value("Proposed edits").run()
+        self.assertIn(edits, [text.value for text in app.text])
+        self.assertFalse(any("EDITS_SENTINEL" in str(m.value) or "external.example" in str(m.value) for m in app.markdown))
+        self.assertTrue(any("does not approve" in str(info.value) for info in app.info))
+        [box for box in app.selectbox if box.label == "Audit"][0].select(newer).run()
+        self.assertFalse(any(r.label == "Review document" for r in app.radio))
+        self.assertNotIn(edits, [text.value for text in app.text])
+        app.sidebar.selectbox[0].select(self.ids["Demo psychology B"]).run()
+        self.assertFalse(any(r.label == "Review document" for r in app.radio))
+        self.assertNotIn(summary, [text.value for text in app.text])
+        self.assertEqual(self.store.changes(sid), before)
+        self.assertFalse(app.exception)
+
     def test_native_table_csv_downloads_receive_escaped_cells(self):
         import pandas as pd
         sid = self.ids["Demo electrician"]

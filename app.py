@@ -277,7 +277,30 @@ def recommendations(store, sid, config):
     st.caption("Review state never grants website permission. Record only independently approved and externally implemented actions. The app has no CMS write integration.")
     if audit:
         aid = audit["id"]
-        for number, row in enumerate(store.findings(sid, aid), start=1):
+        documents = {label: name for label, name in (
+            ("Summary", "reviewed-executive-summary.md"),
+            ("Recommendations", "reviewed-recommendations.md"),
+            ("Proposed edits", "reviewed-proposed-edits.md"),
+        ) if store.audit_file(sid, aid, "reports", name).is_file()}
+        if documents:
+            st.subheader("Review together")
+            st.caption("Start with the summary, then compare the recommendations and proposed edits. These saved documents belong to the selected audit.")
+            if audit["status"] == "partial":
+                st.warning("This audit is incomplete. Read its collection limits before deciding on changes; missing evidence does not prove the website is healthy.")
+            label = st.radio("Review document", list(documents), horizontal=True, key=sid + ":review:" + aid)
+            path = store.audit_file(sid, aid, "reports", documents[label])
+            if path.stat().st_size <= 2 * 1024 * 1024:
+                content = path.read_text(encoding="utf-8")
+                st.text(content)  # Inert report text, including imported links/HTML.
+                st.download_button("Download this review document", content, documents[label], "text/markdown")
+            else:
+                st.warning("This review document exceeds the display limit.")
+            st.info("Reading a report or saving a local draft does not approve a website change. Confirm the facts and approve the exact actions separately.")
+        findings = store.findings(sid, aid)
+        st.subheader("Automated findings")
+        if not findings:
+            st.info("No automated findings were generated for this audit. Check its source limitations and reviewed reports; this does not prove there are no issues.")
+        for number, row in enumerate(findings, start=1):
             f = row["payload"]
             with st.expander(f'{f["priority"]} {f["category"]} — finding {number}'):
                 st.json(f)

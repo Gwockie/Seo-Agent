@@ -27,6 +27,10 @@ three synthetic sites and no credentials/network collection:
 .\.venv-mvp\Scripts\python.exe -m seo_agent app --demo
 ```
 
+After local setup is complete, you can also double-click **Start SEO App.cmd** in
+this folder. Keep its window open while using the app. See
+[reviewing together in the app](docs/review-in-app.md) for the review workflow.
+
 Demo data lives separately in `workspace/demo`. Real data defaults to
 `workspace/private`; all private files, SQLite databases, raw evidence, credentials
 and reports are ignored by Git. No audits or credentials are bundled.

@@ -93,7 +93,8 @@ def run_snapshot(context: AuditContext, svc, *, progress=None, crawl_fn=crawl):
             stages[name] = {"status": "complete", "finished_utc": utc_now()}
             return value
         except Exception:
-            stages[name] = {"status": "failed", "message": "Source unavailable; check selected account, property, network, quota and destination boundaries.", "finished_utc": utc_now()}
+            message = "Public website crawl unavailable; check robots.txt, bot protection, network and destination boundaries." if name == "crawl" else "Source unavailable; check selected account, property, network, quota and destination boundaries."
+            stages[name] = {"status": "failed", "message": message, "finished_utc": utc_now()}
             return None
 
     for period, dates in (("gsc_current", window["current"]), ("gsc_previous", window["previous"])):

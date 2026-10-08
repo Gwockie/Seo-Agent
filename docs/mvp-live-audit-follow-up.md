@@ -62,6 +62,14 @@ website audit. Do not infer empty content or page-level `noindex` from the
 unfinished HTTP 202 response. No website write, sitemap change or indexing request
 was made. The scope remains exactly `webmasters.readonly`.
 
+A subsequent October 8 readiness pass restored a separate protected copy of the
+backup, verifying all 72 evidence files and three audits without changing the
+working connection. The public probe stopped at CAPTCHA-related HTTP 202 from
+`robots.txt`; the crawler now rejects incomplete robots responses. The app has a
+direct **Review together** section and a one-click starter. Its full suite passed
+65 tests; see [reviewing together in the app](review-in-app.md) for the current
+review workflow and precise hosting/security diagnosis step.
+
 ## Historical checkpoints
 
 The October 7 notes below describe earlier blocked prerequisites and are retained
