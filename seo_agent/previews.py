@@ -206,6 +206,7 @@ def page_document(bundle, page, *, proposed=False, highlights=True):
         action = actions.get(node["id"])
         content = "".join(render(c) for c in node.get("children", []))
         cls = ""
+        tooltip = ""
         if action and action["kind"] == "text":
             before = node["children"][action["text_child"]]["text"] if "text_child" in action else node_text(node)
             after = before.replace(action["current"], action["proposed"], 1)
@@ -214,7 +215,10 @@ def page_document(bundle, page, *, proposed=False, highlights=True):
         elif action and highlights:
             cls = ' class="link-change"'
             destination = action["proposed"] if proposed else action["current"]
-            content += '<small class="destination">Link destination: ' + html.escape(destination) + "</small>"
+            # Adding destination text inside a narrow breadcrumb distorts the
+            # captured layout. Keep its wording intact and expose it on hover;
+            # the full before/after values also appear in the action packet.
+            tooltip = ' title="' + html.escape("Link destination: " + destination, quote=True) + '"'
         attributes = ' style="' + html.escape(safe_style(node.get("style", {}), images), quote=True) + '"'
         if tag == "img":
             src = images.get(node.get("src"))
@@ -222,7 +226,7 @@ def page_document(bundle, page, *, proposed=False, highlights=True):
         if tag in ("br", "hr"):
             return "<" + tag + attributes + ">"
         # No original IDs, hrefs, event handlers or attributes are copied.
-        return "<" + tag + attributes + cls + ">" + content + "</" + tag + ">"
+        return "<" + tag + attributes + cls + tooltip + ">" + content + "</" + tag + ">"
     csp = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
     return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + csp + '"><style>' + font_css(bundle["appearance"]) + f"""
     html {{background:#fff}} body {{margin:0;width:{page['width']}px;zoom:calc(100vw / {page['width']}px)}}
@@ -230,7 +234,6 @@ def page_document(bundle, page, *, proposed=False, highlights=True):
     mark.added {{background:#dcfce7;color:#14532d;border-bottom:3px solid #15803d}}
     mark.removed {{background:#fee2e2;color:#7f1d1d;border-bottom:3px solid #b91c1c}}
     .link-change {{outline:3px solid #a16207;outline-offset:3px}}
-    .destination {{display:block!important;background:#fef3c7;color:#422006;font:14px/1.4 Arial!important;padding:6px;overflow-wrap:anywhere}}
     </style></head><body>""" + render(page["tree"]) + "</body></html>"
 
 

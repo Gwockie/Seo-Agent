@@ -44,6 +44,7 @@ the captured page and proposed wording. Use **Before** or **Proposed** for a lar
 view. Red/green marks indicate removed/added words; gold outlines identify changed
 link destinations. Browser titles are shown above the pages. The exact-action
 packet below includes factual confirmations, validation and rollback.
+Hover over a gold outline to see its destination without changing the page layout.
 
 Copies are static captures at the displayed screen width, with locally stored fonts/images. Scripts,
 forms, active links and unsupported decorative elements are omitted. They cannot
@@ -65,8 +66,8 @@ in backups. New captures/proposals use new revisions rather than overwriting the
 earlier page evidence. **Proposed** is the initial display; choose **Before** or
 **Side by side** to compare.
 
-The appearance/preview update passed **82 tests**, including eleven Streamlit
-AppTest scenarios, in 23.242 seconds. Checks cover site/audit separation, current
+The appearance/preview update passed **83 tests**, including eleven Streamlit
+AppTest scenarios. Checks cover site/audit separation, current
 value matching, inert report markup, empty iframe sandbox permissions, external
 resource removal, character preservation across iframe wrappers, preservation of inline wording and surrounding page structure, capture revisions,
 and credential-free backup/restore of appearance and preview artifacts. Runtime

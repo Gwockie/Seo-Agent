@@ -76,6 +76,21 @@ class ReviewTests(unittest.TestCase):
         self.assertNotIn("evil.example", str(soup))
         self.assertNotIn("bad()", str(soup))
 
+    def test_link_diff_preserves_breadcrumb_wording_and_layout(self):
+        page = self.bundle["pages"][0]
+        page["tree"]["children"].append({"tag": "a", "id": "r3", "href": page["url"],
+            "style": {"display": "flex", "width": "32px"}, "children": [{"text": "Home"}]})
+        page["actions"].append({**page["actions"][0], "kind": "href", "node_id": "r3",
+            "current": page["url"], "proposed": page["url"] + "about/"})
+        validate_preview(self.bundle, self.sid, self.aid, self.store.site(self.sid))
+        for proposed in (False, True):
+            soup = BeautifulSoup(page_document(self.bundle, page, proposed=proposed), "html.parser")
+            self.assertEqual(soup.a.get_text(), "Home")
+            self.assertIn("link-change", soup.a["class"])
+            self.assertEqual(soup.a["title"], "Link destination: " + page["actions"][-1]["proposed" if proposed else "current"])
+            self.assertNotIn("href", soup.a.attrs)
+            self.assertFalse(soup.a.find_all())
+
     def test_stale_values_cross_site_and_missing_action_details_fail_closed(self):
         for update in (lambda b: b.update(site_id="f" * 32), lambda b: b.update(audit_id="f" * 32),
                        lambda b: b["pages"][0].update(url="https://other.example/"),
