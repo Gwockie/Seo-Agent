@@ -71,6 +71,34 @@ class TrackingUITests(TrackingFixture, unittest.TestCase):
         self.assertFalse(any(s.label == "Select a change marker" for s in app.selectbox))
         self.assertFalse(app.exception)
 
+    def test_moved_heading_disables_frozen_human_approval(self):
+        from seo_agent.previews import save_preview
+        from seo_agent.storage import utc_now
+        from tests.test_review_previews import fixture
+        bundle = fixture(self.sid, self.aid, self.value["url"])
+        page = bundle["pages"][0]
+        page["captured_utc"] = utc_now()
+        page["tree"]["children"] = [
+            {"id": "r2", "tag": "h1", "children": [{"text": "Service"}]},
+            {"id": "r3", "tag": "p", "children": [{"text": "Price $42 on October 8"}]},
+            {"id": "r4", "tag": "a", "href": self.value["url"], "children": [{"text": "Service link"}]}]
+        page["actions"][0].update(current="Service", proposed="New service")
+        save_preview(self.store, self.sid, self.aid, bundle)
+        t.from_preview(self.store, self.sid, self.aid, 1)
+        record = next(r for r in t.actions(self.store, self.sid) if r["payload"]["action_kind"] == "text")
+        t.save_action(self.store, self.sid, self.aid, {**record["payload"], "confirmations": self.value["confirmations"]}, revision=2)
+        t.freeze_batch(self.store, self.sid, [(record["action_id"], 2)])
+        app = self.app()
+        self.assertFalse(next(b for b in app.button if b.label == "Record my exact human approval").disabled)
+        html = p.latest_snapshot(self.store, self.sid, self.value["url"])["payload"]["html"]
+        html = html.replace("<h1>Service</h1>", "<h1>Changed heading</h1>").replace("</body>", "<footer>Service</footer></body>")
+        p.save_snapshot(self.store, self.sid, self.value["url"], status="complete", payload={"html": html, "headers": {}, "http_status": 200,
+            "final_url": self.value["url"], "values": p.extract(html, self.value["url"], {}), "synthetic": True})
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertTrue(next(b for b in app.button if b.label == "Record my exact human approval").disabled)
+        self.assertTrue(next(c for c in app.checkbox if c.label.startswith("Include text")).disabled)
+
     def test_reruns_do_not_duplicate_refresh_and_settings_are_bounded(self):
         p.save_settings(self.store, self.sid, {"enabled": True})
         with patch("seo_agent.page_tracking.observe", return_value={"status": "complete"}) as observe:

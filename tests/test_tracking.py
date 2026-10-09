@@ -60,6 +60,165 @@ class TrackingFixture:
 
 
 class TrackingTests(TrackingFixture, unittest.TestCase):
+    def preview_target(self, *, kind="text", text_child=False):
+        from seo_agent.previews import save_preview
+        from tests.test_review_previews import fixture
+        bundle = fixture(self.sid, self.aid, self.value["url"])
+        page = bundle["pages"][0]
+        page["captured_utc"] = utc_now()
+        node = page["tree"]["children"][0]
+        proposal = page["actions"][0]
+        if kind == "href":
+            proposal.update(kind="href", current=self.value["url"] + "old/", proposed=self.value["url"] + "new/")
+            node.update(tag="a", href=proposal["current"], children=[{"text": "Service"}])
+            sibling = {"id": "r3", "tag": "a", "href": self.value["url"] + "other/", "children": [{"text": "Other"}]}
+            markup = f'<a href="{proposal["current"]}">Service</a><a href="{sibling["href"]}">Other</a>'
+        else:
+            sibling = {"id": "r3", "tag": "p", "children": [{"text": "Context"}]}
+            markup = '<h1>Our service</h1><p>Context</p>'
+            if text_child:
+                node["children"] = [{"id": "r7", "tag": "span", "children": [{"text": "Prefix:"}]}, {"text": " Our service"}]
+                proposal["text_child"] = 1
+                markup = '<h1><span>Prefix:</span> Our service</h1><p>Context</p>'
+        page["tree"]["children"] = [{"id": "r6", "tag": "main", "children": [node, sibling]},
+                                    {"id": "r4", "tag": "footer", "children": [{"text": "Footer"}]}]
+        save_preview(self.store, self.sid, self.aid, bundle)
+        t.from_preview(self.store, self.sid, self.aid, 1)
+        saved = t.actions(self.store, self.sid)[0]
+        revised = {**saved["payload"], "confirmations": [{"item": "Location confirmed", "status": "confirmed", "source": "Synthetic owner"}]}
+        t.save_action(self.store, self.sid, self.aid, revised, revision=2)
+        html = f'<html><head><title>Service</title></head><body><main>{markup}</main><footer>Footer</footer></body></html>'
+        self.html_snapshot(html)
+        return t.action(self.store, self.sid, saved["action_id"], 2), html
+
+    def html_snapshot(self, html):
+        return p.save_snapshot(self.store, self.sid, self.value["url"], status="complete", payload={"html": html, "headers": {},
+            "http_status": 200, "final_url": self.value["url"], "values": p.extract(html, self.value["url"], {}), "synthetic": True})
+
+    def approve_record(self, record):
+        bid = t.freeze_batch(self.store, self.sid, [(record["action_id"], record["revision"])])
+        approval = t.approve_from_human_ui(self.store, self.sid, bid, human_clicked=True, statement="I approve this exact publication batch", confirmation_source="Synthetic owner")
+        return bid, approval
+
+    def check_moved_heading(self, *, text_child=False):
+        record, html = self.preview_target(text_child=text_child)
+        self.assertTrue(t.readiness(self.store, self.sid, record)["ready"])
+        bid, approval = self.approve_record(record)
+        changed = html.replace("Our service", "Outside changed heading").replace(">Footer</footer>", ">Our service</footer>")
+        self.html_snapshot(changed)
+        self.assertFalse(t.readiness(self.store, self.sid, record)["ready"])
+        self.assertEqual(t.batch_validity(self.store, self.sid, bid), [record["action_id"]])
+        r = {**self.receipt(environment="production", approval=approval), "action_id": record["action_id"], "revision": 2,
+             "current": record["payload"]["current"], "proposed": record["payload"]["proposed"]}
+        with self.assertRaises(ValueError):
+            t.record_receipt(self.store, self.sid, r)
+        self.html_snapshot(html)
+        self.assertTrue(t.readiness(self.store, self.sid, record)["ready"])
+        self.assertEqual(t.batch_validity(self.store, self.sid, bid), [record["action_id"]], "Returning content must not restore old approval")
+
+    def test_moved_heading_invalidates_exact_target(self):
+        self.check_moved_heading()
+
+    def test_moved_direct_text_child_invalidates_exact_target(self):
+        self.check_moved_heading(text_child=True)
+
+    def test_href_moving_to_another_link_cannot_preserve_approval(self):
+        record, html = self.preview_target(kind="href")
+        bid, _ = self.approve_record(record)
+        changed = html.replace(record["payload"]["current"], self.value["url"] + "outside/").replace(self.value["url"] + "other/", record["payload"]["current"])
+        self.html_snapshot(changed)
+        self.assertFalse(t.readiness(self.store, self.sid, record)["ready"])
+        self.assertEqual(t.batch_validity(self.store, self.sid, bid), [record["action_id"]])
+
+    def test_text_without_resolvable_capture_target_is_planning_only(self):
+        self.value.update(action_kind="text", current="Service", proposed="New service")
+        self.import_action()
+        self.snapshot()
+        self.assertFalse(t.readiness(self.store, self.sid, t.actions(self.store, self.sid)[0])["ready"])
+        with self.assertRaises(ValueError):
+            t.freeze_batch(self.store, self.sid, [(self.value["action_id"], 1)])
+
+    def test_target_structure_changes_fail_closed_but_whitespace_and_scripts_do_not(self):
+        record, html = self.preview_target()
+        bid, _ = self.approve_record(record)
+        unchanged = html.replace("<main>", "<main>\n ").replace("</main>", "<script>ignored()</script></main>")
+        self.html_snapshot(unchanged)
+        self.assertTrue(t.readiness(self.store, self.sid, record)["ready"])
+        self.assertEqual(t.batch_validity(self.store, self.sid, bid), [])
+        # Even a matching value must not authorize work in an altered hierarchy.
+        self.html_snapshot(html.replace("<main>", "<main><h1>Inserted heading</h1>"))
+        self.assertFalse(t.readiness(self.store, self.sid, record)["ready"])
+        self.assertEqual(t.batch_validity(self.store, self.sid, bid), [record["action_id"]])
+
+    def test_public_verification_checks_the_frozen_target_not_matching_copy_elsewhere(self):
+        record, html = self.preview_target()
+        bid, approval = self.approve_record(record)
+        r = {**self.receipt(environment="production", approval=approval), "action_id": record["action_id"], "revision": 2,
+             "current": record["payload"]["current"], "proposed": record["payload"]["proposed"]}
+        t.record_receipt(self.store, self.sid, r)
+        t.record_receipt(self.store, self.sid, {**r, "receipt_id": new_id(), "outcome": "reported_applied", "actual": r["proposed"], "occurred_utc": utc_now()})
+        wrong = html.replace(r["current"], "Outside heading").replace(">Footer</footer>", ">" + r["proposed"] + "</footer>")
+        snapshot = self.html_snapshot(wrong)
+        verification = {**r, "receipt_id": new_id(), "outcome": "verification", "actual": r["proposed"], "occurred_utc": utc_now(),
+                        "verification": "Synthetic public source", "verification_snapshot_id": snapshot}
+        with self.assertRaises(ValueError):
+            t.record_receipt(self.store, self.sid, verification)
+        correct = self.html_snapshot(html.replace(r["current"], r["proposed"]))
+        t.record_receipt(self.store, self.sid, {**verification, "verification_snapshot_id": correct, "occurred_utc": utc_now()})
+        archive = self.root / "target-backup.zip"
+        _backup(self.store, archive)
+        restored = _restore(archive, self.root / "target-restored")
+        self.assertEqual(t.batch(restored, self.sid, bid), t.batch(self.store, self.sid, bid))
+
+    def test_failed_receipt_with_changed_actual_requires_partial_and_new_review(self):
+        bid, approval = self.approval()
+        first = self.receipt(environment="production", approval=approval)
+        t.record_receipt(self.store, self.sid, first)
+        failed = {**first, "receipt_id": new_id(), "outcome": "failed", "actual": "Unexpected partial value", "occurred_utc": utc_now()}
+        with self.assertRaisesRegex(ValueError, "reported as partial"):
+            t.record_receipt(self.store, self.sid, failed)
+        self.assertEqual(len(t.rows(self.store, "implementation_receipts", self.sid)), 1)
+        t.record_receipt(self.store, self.sid, {**failed, "outcome": "partial"})
+        self.assertEqual(t.batch_validity(self.store, self.sid, bid), [self.value["action_id"]])
+        with self.assertRaises(ValueError):
+            t.record_receipt(self.store, self.sid, self.receipt(environment="production", approval=approval))
+
+    def test_previous_changed_failed_receipt_cannot_reuse_approval(self):
+        bid, approval = self.approval()
+        first = self.receipt(environment="production", approval=approval)
+        t.record_receipt(self.store, self.sid, first)
+        failed = {**first, "receipt_id": new_id(), "outcome": "failed", "actual": "Before", "occurred_utc": utc_now()}
+        t.record_receipt(self.store, self.sid, failed)
+        with self.store.db() as db:
+            db.execute("UPDATE implementation_receipts SET payload=? WHERE id=?", (t.canonical({**failed, "actual": "Changed by old version"}), failed["receipt_id"]))
+        self.assertEqual(t.batch_validity(self.store, self.sid, bid), [self.value["action_id"]])
+        with self.assertRaises(ValueError):
+            t.record_receipt(self.store, self.sid, self.receipt(environment="production", approval=approval))
+
+    def test_failed_receipt_reporting_original_value_preserves_eligible_retry(self):
+        bid, approval = self.approval()
+        first = self.receipt(environment="production", approval=approval)
+        t.record_receipt(self.store, self.sid, first)
+        t.record_receipt(self.store, self.sid, {**first, "receipt_id": new_id(), "outcome": "failed", "actual": "Before", "occurred_utc": utc_now()})
+        self.assertEqual(t.batch_validity(self.store, self.sid, bid), [])
+        t.record_receipt(self.store, self.sid, self.receipt(environment="production", approval=approval))
+
+    def test_restore_rejects_receipt_action_and_revision_column_payload_mismatches(self):
+        self.import_action()
+        receipt = self.receipt()
+        t.record_receipt(self.store, self.sid, receipt)
+        other = {**self.value, "action_id": new_id(), "current": "Different before", "proposed": "Different after"}
+        t.save_action(self.store, self.sid, self.aid, other)
+        t.save_action(self.store, self.sid, self.aid, {**self.value, "proposed": "Different revision"}, revision=2)
+        for index, (identity, revision) in enumerate(((other["action_id"], 1), (self.value["action_id"], 2))):
+            with self.subTest(identity=identity, revision=revision):
+                with self.store.db() as db:
+                    db.execute("UPDATE implementation_receipts SET action_id=?,revision=? WHERE id=?", (identity, revision, receipt["receipt_id"]))
+                archive = self.root / f"mismatch-{index}.zip"
+                _backup(self.store, archive)
+                with self.assertRaisesRegex(ValueError, "identity differs"):
+                    _restore(archive, self.root / f"mismatch-restored-{index}")
+
     def test_handoff_idempotence_literal_input_and_no_approval(self):
         self.value["rationale"] = "<script>alert(1)</script> =SUM(A1) is inert data"
         self.handoff["actions"] = [self.value]
@@ -128,7 +287,7 @@ class TrackingTests(TrackingFixture, unittest.TestCase):
     def test_changed_action_does_not_invalidate_another_approved_action(self):
         self.import_action()
         self.snapshot()
-        second = {**self.value, "action_id": new_id(), "action_kind": "text", "current": "Price $42 on October 8", "proposed": "Confirmed price $42 on October 8"}
+        second = {**self.value, "action_id": new_id(), "action_kind": "canonical", "current": self.value["url"], "proposed": self.value["url"] + "canonical/"}
         t.save_action(self.store, self.sid, self.aid, second)
         bid = t.freeze_batch(self.store, self.sid, [(self.value["action_id"], 1), (second["action_id"], 1)])
         approval = t.approve_from_human_ui(self.store, self.sid, bid, human_clicked=True, statement="I approve this exact publication batch", confirmation_source="Synthetic human confirmed both")

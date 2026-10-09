@@ -6,7 +6,7 @@ repository's hash-pinned development lockfile in `.venv-tracking`.
 
 ## Automated checks
 
-The final full suite passed **131 tests**, including **18 Streamlit AppTest
+The initial implementation's full suite passed **131 tests**, including **18 Streamlit AppTest
 scenarios**. The earlier 97-test baseline is not counted as independent proof.
 The additional tracking coverage uses only generated sites, synthetic website
 responses and synthetic Google exports, and checks:
@@ -78,3 +78,37 @@ Search Console scope is unchanged. A separately authorized WordPress step and
 fresh factual/current-value review remain required for website implementation.
 Primary rollout waits for idle live jobs and a verified protected pre-migration
 backup, as described in `automatic-change-tracking.md`.
+
+## Independent review fixes
+
+A subsequent review reproduced three defects: a heading/link value surviving in
+another location kept approval usable; a changed actual value in a failed receipt
+allowed retry with the same approval; and restored receipt column/payload action
+identities could disagree. The fixes bind frozen text/link targets to saved preview
+structure, reject contradictory failed outcomes and block historical reuse, and
+validate restored receipt action/revision identities. Target bindings also apply
+to public verification and are validated on restore. Older untargeted batches
+remain history but cannot authorize new text/link work.
+
+The full suite after these fixes passed **142 tests in 111.811 seconds**, including
+**19 AppTest scenarios**. Eleven additional regressions cover moved headings,
+direct text-child slots and links, hierarchy ambiguity versus harmless whitespace/
+scripts, wrong-location public verification, target backup restoration, partial
+failure versus eligible unchanged retries, historical contradictory failures,
+receipt action/revision mismatches and disabled stale-target human approval in UI.
+Compilation and whitespace checks passed.
+
+A new real-browser smoke check used only `workspace/tracking-fix-smoke` on
+127.0.0.1:8513. A synthetic captured H1 was changed while its original text moved
+to the footer. The browser showed the text action and frozen human approval
+disabled, with the stale-action warning. No approval was submitted and no browser
+console errors were reported. The screenshot stays in ignored local artifacts;
+the temporary development server is separate from the primary app.
+
+The independent reviewer confirmed all three findings are addressed and reported
+no additional actionable defect in the fixes. Its separate run passed **35
+tracking tests**, plus a synthetic relative-link/proposed-verification probe.
+That independent count overlaps the full suite; it is not additional coverage.
+Browser-captured versus static HTML structure may differ. Target matching fails
+closed in that case; a fresh matching capture/review is required. This does not
+certify the feature as bug free or validate live rollout.

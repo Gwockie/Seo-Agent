@@ -62,11 +62,7 @@ def text_value(value):
     return re.sub(r"\s+", " ", value).strip()
 
 
-def extract(html, url, headers):
-    soup = BeautifulSoup(html, "html.parser")
-    title = text_value(soup.title.get_text(" ")) if soup.title else None
-    if not soup.html or not soup.body or not title or soup.find(id=re.compile(r"^(cf-chl|challenge|captcha)", re.I)) or title.casefold() in {"just a moment...", "just a moment…", "attention required! | cloudflare", "verify you are human", "access denied"}:
-        raise ValueError("Incomplete/challenged HTML is not page content")
+def clean_content(soup):
     for n in soup.find_all(["script", "style", "template", "noscript"]):
         n.decompose()
     for n in list(soup.find_all(attrs={"hidden": True})) + list(soup.find_all(attrs={"aria-hidden": "true"})):
@@ -74,6 +70,14 @@ def extract(html, url, headers):
             n.decompose()
     for n in soup.find_all(string=lambda s: isinstance(s, Comment)):
         n.extract()
+
+
+def extract(html, url, headers):
+    soup = BeautifulSoup(html, "html.parser")
+    title = text_value(soup.title.get_text(" ")) if soup.title else None
+    if not soup.html or not soup.body or not title or soup.find(id=re.compile(r"^(cf-chl|challenge|captcha)", re.I)) or title.casefold() in {"just a moment...", "just a moment…", "attention required! | cloudflare", "verify you are human", "access denied"}:
+        raise ValueError("Incomplete/challenged HTML is not page content")
+    clean_content(soup)
     headings = [{"tag": n.name, "text": text_value(n.get_text(" "))} for n in soup.find_all(re.compile(r"^h[1-6]$"))]
     copy = [text_value(str(n)) for n in soup.body.find_all(string=True) if text_value(str(n))]
     if not copy or copy == ["Loading..."]:
@@ -87,21 +91,109 @@ def extract(html, url, headers):
         "limits": "Static HTML; script-rendered content, CSS visibility and CMS settings are not verified. Only whitespace/active markup normalized."}
 
 
-def observed_value(values, a, *, proposed=False):
+def capture_target(store, sid, record):
+    """Bind a preview target to its structural location, never to a page-wide value.
+
+    Browser trees may differ from static HTML. Such differences deliberately leave
+    publication review unavailable instead of guessing another matching element.
+    """
+    from .previews import load_preview, node_text
+    a = record["payload"]
+    targets = []
+    for ref in a["evidence"]:
+        if ref["revision"] is None or not ref["node_id"]:
+            continue
+        bundle = load_preview(store, sid, record["audit_id"], revision=ref["revision"])
+        if not bundle:
+            continue
+        for page in bundle["pages"]:
+            if page["url"] != a["url"] or page["tree"].get("tag") != "body":
+                continue
+            original = [v for v in page["actions"] if v.get("node_id") == ref["node_id"] and v["kind"] == a["action_kind"] and v["current"] == a["current"]]
+            if len(original) != 1:
+                continue
+            def locate(node, path):
+                if node.get("id") == ref["node_id"]:
+                    return node, path
+                children = [c for c in node.get("children", []) if "text" not in c or text_value(c["text"])]
+                layout = ["#text" if "text" in c else c.get("tag") for c in children]
+                counts = {}
+                for child in children:
+                    tag = child.get("tag")
+                    if not tag:
+                        continue
+                    index = counts.get(tag, 0)
+                    counts[tag] = index + 1
+                    found = locate(child, path + [{"tag": tag, "index": index, "siblings": layout}])
+                    if found:
+                        return found
+                return None
+            located = locate(page["tree"], [])
+            if not located:
+                continue
+            node, path = located
+            source = original[0]
+            child_index = source.get("text_child")
+            before = node_text(node)
+            if child_index is not None:
+                before = node["children"][child_index]["text"]
+                child_index = sum("text" not in c or bool(text_value(c["text"])) for c in node["children"][:child_index])
+            if a["action_kind"] == "href":
+                before = urljoin(a["url"], node["href"])
+                after = urljoin(a["url"], a["proposed"])
+            elif before.count(a["current"]) == 1:
+                after = before.replace(a["current"], a["proposed"], 1)
+            else:
+                continue
+            target = {"path": path, "text_child": child_index, "before": text_value(before), "after": text_value(after),
+                      "current": a["current"], "proposed": a["proposed"],
+                      "children": ["#text" if "text" in c else c.get("tag") for c in node.get("children", []) if "text" not in c or text_value(c["text"])]}
+            if a["action_kind"] == "href":
+                target["label"] = text_value(node_text(node))
+            if target not in targets:
+                targets.append(target)
+    return targets[0] if len(targets) == 1 else None
+
+
+def observed_value(values, a, *, proposed=False, target=None, html=None):
     candidate = a["proposed"] if proposed else a["current"]
     if candidate is None:
         return None
     kind = a["action_kind"]
     if kind in ("title", "canonical", "index_directive"):
         return values.get(kind)
-    if kind == "text":
-        # A text receipt needs one exact DOM text occurrence; substring guesses
-        # and duplicate targets cannot authorize a publication.
-        matches = [v for v in values.get("copy", []) if v == candidate]
-        return candidate if len(matches) == 1 else None
-    if kind == "href":
-        matches = [v for v in values.get("links", []) if v["href"] == candidate]
-        return candidate if len(matches) == 1 else None
+    if kind in ("text", "href"):
+        if not target or not html or target["current"] != a["current"] or target["proposed"] != a["proposed"]:
+            return None
+        soup = BeautifulSoup(html, "html.parser")
+        clean_content(soup)
+        node = soup.body
+        if node is None:
+            return None
+        for step in target["path"]:
+            children = [c for c in node.children if getattr(c, "name", None) or text_value(str(c))]
+            if [c.name if getattr(c, "name", None) else "#text" for c in children] != step["siblings"]:
+                return None
+            matches = [c for c in children if getattr(c, "name", None) == step["tag"]]
+            if not 0 <= step["index"] < len(matches):
+                return None
+            node = matches[step["index"]]
+        children = [c for c in node.children if getattr(c, "name", None) or text_value(str(c))]
+        if [c.name if getattr(c, "name", None) else "#text" for c in children] != target["children"]:
+            return None
+        if kind == "href":
+            if node.name != "a" or text_value(node.get_text()) != target["label"]:
+                return None
+            actual = urljoin(a["url"], node.get("href", ""))
+        elif target["text_child"] is not None:
+            children = [c for c in node.children if getattr(c, "name", None) or text_value(str(c))]
+            index = target["text_child"]
+            if not 0 <= index < len(children) or getattr(children[index], "name", None):
+                return None
+            actual = str(children[index])
+        else:
+            actual = node.get_text()
+        return candidate if text_value(actual) == target["after" if proposed else "before"] else None
     return None
 
 
@@ -135,7 +227,7 @@ def save_snapshot(store, sid, url, *, status, payload, checked=None, audit_id=No
                 b = batch(store, sid, approval["batch_id"])
                 for frozen in b["payload"]["actions"]:
                     a = frozen["action"]
-                    if a["url"] == url and observed_value(payload["values"], a, proposed=False) != a["current"]:
+                    if a["url"] == url and observed_value(payload["values"], a, target=frozen.get("target"), html=payload["html"]) != a["current"]:
                         old = db.execute("SELECT 1 FROM approval_invalidations WHERE approval_id=? AND action_id=?", (approval["id"], frozen["action_id"])).fetchone()
                         if not old:
                             db.execute("INSERT INTO approval_invalidations VALUES (?,?,?,?,?,?,?)", (new_id(), sid, approval["id"], frozen["action_id"], frozen["revision"], checked, canonical({"reason": "Observed current value changed; approval cannot be reused even if the value later returns", "snapshot_id": snapid})))
