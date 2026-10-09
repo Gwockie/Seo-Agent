@@ -243,9 +243,14 @@ def from_plan(store, sid, pid, kind, confirmations, validation, rollback):
     return save_action(store, sid, p["audit_id"], raw, plan_id=pid)
 
 
-def readiness(store, sid, record, *, now=None):
-    from .page_tracking import latest_snapshot, observed_value
+_CAPTURE_TARGET = object()
+
+
+def readiness(store, sid, record, *, now=None, target=_CAPTURE_TARGET):
+    from .page_tracking import latest_snapshot, observed_value, capture_target
     a = record["payload"]
+    if target is _CAPTURE_TARGET:
+        target = capture_target(store, sid, record) if a["action_kind"] in ("text", "href") else None
     now = now or datetime.now(timezone.utc)
     snapshot = latest_snapshot(store, sid, a["url"])
     reasons = []
@@ -253,15 +258,15 @@ def readiness(store, sid, record, *, now=None):
         reasons.append("Current public source is unavailable")
     elif now - datetime.fromisoformat(snapshot["checked"]) > timedelta(hours=24):
         reasons.append("Refresh public values; capture is older than 24 hours")
-    elif a["current"] is None or observed_value(snapshot["payload"]["values"], a, proposed=False) != a["current"]:
-        reasons.append("Current public value is unknown, ambiguous or differs from the proposal")
+    elif a["current"] is None or observed_value(snapshot["payload"]["values"], a, target=target, html=snapshot["payload"]["html"]) != a["current"]:
+        reasons.append("Current public target/value is unknown, ambiguous or differs from the proposal; text/link actions need matching captured target evidence")
     if not a["confirmations"] or any(c["status"] != "confirmed" for c in a["confirmations"]):
         reasons.append("Supplied factual assertions still need explicit human confirmation")
     if a["action_kind"] == "setting":
         reasons.append("Settings cannot be verified by public-page capture")
     if a["current"] is None or not a["capture_time_utc"]:
         reasons.append("Capture time/current value is missing; append a refreshed revision")
-    return {"ready": not reasons, "reasons": reasons, "snapshot_id": snapshot["id"] if snapshot else None}
+    return {"ready": not reasons, "reasons": reasons, "snapshot_id": snapshot["id"] if snapshot else None, "target": target}
 
 
 def freeze_batch(store, sid, selected):
@@ -283,7 +288,8 @@ def freeze_batch(store, sid, selected):
         if target in targets or (a["action_kind"] in ("title", "canonical", "index_directive") and any(t[:2] == target[:2] for t in targets)):
             raise ValueError("Overlapping actions cannot be approved together")
         targets.add(target)
-        frozen.append({"action_id": identity, "revision": revision, "audit_id": r["audit_id"], "snapshot_id": ready["snapshot_id"], "action": a})
+        frozen.append({"action_id": identity, "revision": revision, "audit_id": r["audit_id"], "snapshot_id": ready["snapshot_id"], "action": a,
+                       **({"target": ready["target"]} if ready["target"] is not None else {})})
     payload = {"actions": frozen, "fingerprint": digest(frozen)}
     bid = new_id()
     with store.db() as db:
@@ -307,7 +313,12 @@ def batch_validity(store, sid, bid):
         r = latest[a["action_id"]]
         approvals = [v["id"] for v in rows(store, "human_approvals", sid) if v["batch_id"] == bid]
         invalidated = any(v["approval_id"] in approvals and v["action_id"] == a["action_id"] for v in rows(store, "approval_invalidations", sid))
-        if r["revision"] != a["revision"] or not readiness(store, sid, r)["ready"] or invalidated:
+        # Fail closed for contradictory failures saved before the receipt guard.
+        changed_failure = any(v["payload"]["approval_id"] in approvals and v["action_id"] == a["action_id"] and v["revision"] == a["revision"]
+                              and v["payload"]["environment"] == "production" and v["payload"]["outcome"] == "failed"
+                              and v["payload"]["actual"] is not None and v["payload"]["actual"] != v["payload"]["current"]
+                              for v in rows(store, "implementation_receipts", sid))
+        if r["revision"] != a["revision"] or not readiness(store, sid, r, target=a.get("target"))["ready"] or invalidated or changed_failure:
             invalid.append(a["action_id"])
     return invalid
 
@@ -372,12 +383,16 @@ def record_receipt(store, sid, raw):
         raise ValueError("An attempt is not an outcome")
     if r["outcome"] == "partial" and r["actual"] is None:
         raise ValueError("Partial work needs the actual value")
+    if r["outcome"] == "failed" and r["actual"] is not None and r["actual"] != r["current"]:
+        raise ValueError("Failed work with a changed actual value must be reported as partial")
     if r["outcome"] == "verification" and not r["verification"].strip():
         raise ValueError("Verification requires evidence text")
     if r["verification_snapshot_id"]:
         from .page_tracking import observed_value
         snapshot = next((s for s in rows(store, "public_snapshots", sid) if s["id"] == r["verification_snapshot_id"]), None)
-        if r["outcome"] != "verification" or r["environment"] != "production" or not snapshot or snapshot["status"] != "complete" or snapshot["url"] != a["payload"]["url"] or snapshot["checked"] > r["occurred_utc"] or observed_value(snapshot["payload"]["values"], a["payload"], proposed=True) != r["actual"] or r["actual"] != r["proposed"]:
+        approval = next((v for v in rows(store, "human_approvals", sid) if v["id"] == r["approval_id"]), None)
+        frozen = next((v for v in batch(store, sid, approval["batch_id"])["payload"]["actions"] if v["action_id"] == r["action_id"] and v["revision"] == r["revision"]), None) if approval else None
+        if r["outcome"] != "verification" or r["environment"] != "production" or not frozen or not snapshot or snapshot["status"] != "complete" or snapshot["url"] != a["payload"]["url"] or snapshot["checked"] > r["occurred_utc"] or observed_value(snapshot["payload"]["values"], a["payload"], proposed=True, target=frozen.get("target"), html=snapshot["payload"]["html"]) != r["actual"] or r["actual"] != r["proposed"]:
             raise ValueError("Public verification must match an exact successful own-site snapshot and actual proposal value")
     if r["environment"] != "production" and r["approval_id"] is not None:
         raise ValueError("Local/staging receipts do not consume production approval")
@@ -492,8 +507,10 @@ def validate_restored_tracking(store):
                     raise ValueError("Restored plan relationship invalid")
         for r in rows(store, "implementation_receipts", sid):
             v = Receipt.model_validate(r["payload"]).model_dump(by_alias=True)
-            a = action(store, sid, v["action_id"], v["revision"])
-            if v["site_id"] != sid or v["receipt_id"] != r["id"] or v["current"] != a["payload"]["current"] or v["proposed"] != a["payload"]["proposed"]:
+            if v["site_id"] != r["site_id"] or v["receipt_id"] != r["id"] or v["action_id"] != r["action_id"] or v["revision"] != r["revision"]:
+                raise ValueError("Restored receipt identity differs from its database association")
+            a = action(store, sid, r["action_id"], r["revision"])
+            if v["current"] != a["payload"]["current"] or v["proposed"] != a["payload"]["proposed"]:
                 raise ValueError("Restored receipt association invalid")
             timestamp(v["occurred_utc"])
         for r in rows(store, "public_snapshots", sid):
@@ -522,6 +539,10 @@ def validate_restored_tracking(store):
                 snapshot = snapshots.get(a["snapshot_id"])
                 if not snapshot or snapshot["status"] != "complete" or snapshot["url"] != a["action"]["url"]:
                     raise ValueError("Restored frozen capture reference invalid")
+                if "target" in a:
+                    from .page_tracking import capture_target, observed_value
+                    if a["target"] != capture_target(store, sid, r) or observed_value(snapshot["payload"]["values"], a["action"], target=a["target"], html=snapshot["payload"]["html"]) != a["action"]["current"]:
+                        raise ValueError("Restored frozen target differs from its capture evidence")
         for a in rows(store, "human_approvals", sid):
             b = batch(store, sid, a["batch_id"])
             if a["payload"].get("fingerprint") != b["payload"]["fingerprint"] or a["payload"].get("origin") != "explicit human UI submission":

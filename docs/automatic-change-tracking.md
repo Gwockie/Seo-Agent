@@ -21,8 +21,12 @@ files. Do not open the primary workspace from a development checkout.
    a proposal; prior revisions remain available in frozen batches and history.
    Missing current values/capture times remain useful for planning. Adopt a fresh
    successful public capture and confirm factual items with the owner/clinician
-   before requesting publication review. Settings and ambiguous repeated text/link
-   targets cannot be verified by this public capture and remain unready.
+   before requesting publication review. Text/link actions need an exact target in
+   saved preview evidence. The frozen packet binds its structural path, sibling/
+   child layout, text-child slot when applicable, full before/after content and
+   link label. A matching value elsewhere cannot validate approval or verification.
+   If browser-captured structure differs from static HTML, capture a new matching
+   preview; do not guess the target. Unresolved targets and settings remain unready.
 4. Select exact actions and **Freeze selected publication batch**. Current public
    values must match uniquely, captures must be at most 24 hours old, and factual
    assertions must be complete. Overlapping actions are rejected. The frozen
@@ -57,6 +61,8 @@ finds a stale current value, an append-only invalidation prevents the affected
 action's approval from becoming usable again even if that value later returns.
 Reported partial work, corrections and rollbacks require renewed review before
 another production attempt. Unaffected actions keep their exact approved scope.
+Earlier frozen text/link batches without target bindings remain historical but
+cannot authorize new work. Freeze a fresh batch after reviewing captured targets.
 
 ## Local agent CLI and Python interface
 
@@ -107,6 +113,10 @@ changes the earlier receipt. IDs and repeated identical events are replay checke
 Public verification snapshots must match the exact actual/proposed value, follow
 the attempt and precede the verification receipt. A free-text verification source
 alone is reported evidence, not independently verified public content.
+`failed` may report an unknown actual value or the unchanged original value.
+Any known changed value must be reported as `partial`, which invalidates approval
+for that action. Contradictory changed failures saved by an earlier app version
+also prevent approval reuse without rewriting their history.
 
 For an execution agent calling Python directly:
 
@@ -181,8 +191,10 @@ Credential-free backups include all new tracking tables/source captures and the
 known page daily exports. Restore accepts the original pre-journal schema, the
 version 1 journal and complete version 2 schema, validates table structures and
 inert relationships, and adds empty tracking tables for old backups. Google
-selections remain detached. Restored approvals are preserved as history only;
-freeze a new batch and get fresh human approval before another production attempt.
+selections remain detached. Restored approvals are preserved as history only.
+Receipt IDs, site IDs, action IDs and revisions must agree between SQLite columns
+and their JSON payloads, and frozen target bindings must agree with source evidence.
+Freeze a new batch and get fresh human approval before another production attempt.
 Selected-audit ZIP packets include a `tracking.json` supplement with only that
 audit's actions and related receipt, approval-history, observation/source and trend
 records. Unassigned site-opening captures are included only when referenced by
