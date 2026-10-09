@@ -124,6 +124,7 @@ are documented in the setup guide.
 
 - [Implementation/security checklist](docs/implementation-checklist.md)
 - [Follow-up agent prompt](docs/mvp-follow-up-agent-prompt.md)
+- [Parallel weekly scheduling and SEO follow-ups](docs/weekly-and-seo-parallel-handoff.md)
 - [Setup, secure storage and migration](docs/setup-and-migration.md)
 - [Reviewed shared mechanisms](docs/shared-playbook.md)
 - [Repo-scoped seo-audit skill](.agents/skills/seo-audit/SKILL.md)
