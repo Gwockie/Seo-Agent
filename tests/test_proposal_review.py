@@ -79,6 +79,23 @@ class ProposalReviewTests(TrackingFixture, unittest.TestCase):
         self.store.audit_file(self.sid, self.aid, "data", "crawl.csv").write_text("url,title\nhttps://example.com/,Different source\n", encoding="utf-8")
         self.assertTrue(r.is_stale(self.store, self.sid, latest))
 
+    def test_refreshed_capture_preserves_approved_exact_action_but_requires_fresh_pending_review(self):
+        evaluation = self.evaluate()
+        bid = t.freeze_batch(self.store, self.sid, [(self.value["action_id"], 1)])
+        pending = t.freeze_batch(self.store, self.sid, [(self.value["action_id"], 1)])
+        t.approve_from_human_ui(self.store, self.sid, bid, human_clicked=True, statement="I approve this exact publication batch", confirmation_source="Synthetic owner")
+        frozen = copy.deepcopy(t.batch(self.store, self.sid, bid))
+        self.snapshot()
+        self.assertTrue(r.is_stale(self.store, self.sid, evaluation))
+        self.assertFalse(t.batch_validity(self.store, self.sid, bid))
+        self.assertTrue(t.batch_validity(self.store, self.sid, pending))
+        with self.assertRaises(ValueError):
+            t.approve_from_human_ui(self.store, self.sid, pending, human_clicked=True, statement="I approve this exact publication batch", confirmation_source="Synthetic owner")
+        request = self.evaluate()
+        r.import_model(self.store, self.sid, request["id"], t.canonical(model_output(request, questions=["Owner confirms availability"])).encode())
+        self.assertTrue(t.batch_validity(self.store, self.sid, bid), "New mandatory owner questions still block approved actions")
+        self.assertEqual(t.batch(self.store, self.sid, bid), frozen)
+
     def test_unavailable_infrastructure_is_explicit_no_outbound_call(self):
         with patch("requests.Session.request") as network:
             evaluation = self.evaluate()
@@ -101,17 +118,26 @@ class ProposalReviewTests(TrackingFixture, unittest.TestCase):
         self.assertEqual(len(r.evaluations(self.store, self.sid, self.value["action_id"])), 1)
 
     def test_supported_destinations_directives_exclusions_and_uplift_constraints(self):
-        for kind, proposed, expected in (("href", "javascript:alert(1)", "Destination"), ("canonical", "https://other.example/", "Cross-site"), ("index_directive", "index, noindex", "Conflicting"), ("index_directive", "madeup", "Unsupported")):
+        for kind, proposed, expected in (("href", "javascript:alert(1)", "Destination"), ("canonical", "https://other.example/", "Cross-site"), ("index_directive", "index, noindex", "Conflicting"), ("index_directive", "index, none", "Conflicting"), ("index_directive", "follow, none", "Conflicting"), ("index_directive", "madeup", "Unsupported")):
             with self.subTest(kind=kind, proposed=proposed):
                 value = {**self.value, "action_id": new_id(), "action_kind": kind, "proposed": proposed}
                 t.save_action(self.store, self.sid, self.aid, value)
                 record = t.action(self.store, self.sid, value["action_id"], 1)
                 self.assertTrue(any(expected in s for s in r.constraint_blockers(self.store, self.sid, record)))
+        for directive in ("all, noindex", "all, nofollow", "none"):
+            value = {**self.value, "action_id": new_id(), "action_kind": "index_directive", "proposed": directive}
+            t.save_action(self.store, self.sid, self.aid, value)
+            self.assertFalse(r.constraint_blockers(self.store, self.sid, t.action(self.store, self.sid, value["action_id"], 1)))
         config = self.store.site(self.sid)
         self.store.save_site(SiteConfig.model_validate({**config.model_dump(), "exclusions": [self.value["url"]]}), self.sid)
-        value = {**self.value, "action_id": new_id(), "action_kind": "index_directive", "proposed": "index, follow"}
-        t.save_action(self.store, self.sid, self.aid, value)
-        self.assertTrue(any("exclusion" in s for s in r.constraint_blockers(self.store, self.sid, t.action(self.store, self.sid, value["action_id"], 1))))
+        for directive in ("index, follow", "all", "all, nofollow", "noarchive"):
+            value = {**self.value, "action_id": new_id(), "action_kind": "index_directive", "proposed": directive}
+            t.save_action(self.store, self.sid, self.aid, value)
+            self.assertTrue(any("exclusion" in s for s in r.constraint_blockers(self.store, self.sid, t.action(self.store, self.sid, value["action_id"], 1))))
+        for directive in ("none", "all, noindex"):
+            value = {**self.value, "action_id": new_id(), "action_kind": "index_directive", "proposed": directive}
+            t.save_action(self.store, self.sid, self.aid, value)
+            self.assertFalse(r.constraint_blockers(self.store, self.sid, t.action(self.store, self.sid, value["action_id"], 1)))
         r.revise(self.store, self.sid, t.action(self.store, self.sid, self.value["action_id"], 1), {"expected_effect": "Will increase organic clicks by 30%"})
         record = t.action(self.store, self.sid, self.value["action_id"], 2)
         self.assertTrue(any("numerical uplift" in s for s in r.constraint_blockers(self.store, self.sid, record)))

@@ -96,9 +96,14 @@ def constraint_blockers(store, sid, record):
         tokens = {v.strip().casefold() for v in a["proposed"].split(",")}
         if not tokens or not tokens <= {"index", "noindex", "follow", "nofollow", "none", "all", "noarchive", "nosnippet", "noimageindex"}:
             blockers.append("Unsupported indexing directive; obtain exact technical scope before approval")
-        if "index" in tokens and "noindex" in tokens:
-            blockers.append("Conflicting index and noindex directives")
-        if a["url"] in config.exclusions and "index" in tokens:
+        # "all" is neutral; restrictive directives alongside it still apply.
+        # "none" is an alias for noindex,nofollow.
+        semantic = tokens | ({"noindex", "nofollow"} if "none" in tokens else set())
+        if "index" in semantic and "noindex" in semantic:
+            blockers.append("Conflicting index and noindex proposal intent; clarify exact technical scope")
+        if "follow" in semantic and "nofollow" in semantic:
+            blockers.append("Conflicting follow and nofollow proposal intent; clarify exact technical scope")
+        if a["url"] in config.exclusions and "noindex" not in semantic:
             blockers.append("Proposed indexing conflicts with this site's saved exclusion")
     if re.search(PROMISES, a["proposed"] + " " + a["expected_effect"], re.I):
         blockers.append("Remove guaranteed rankings or invented numerical uplift")

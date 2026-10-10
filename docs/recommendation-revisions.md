@@ -68,6 +68,10 @@ needs a new batch and human approval. New batches also pin configuration/evidenc
 A fresh capture alone leaves unchanged actions' approval usable if their exact
 frozen structural target/value still passes independent validation. Legacy packet
 scope is preserved without historical rewrites.
+Pending batches still require a current assessment before human approval. Already
+approved batches continue to enforce factual/technical blockers, including newly
+raised owner questions. Indexing proposals for excluded URLs must retain effective
+`noindex`; `none` means `noindex, nofollow`, while `all` is neutral.
 
 ## Limits and measurement
 
@@ -111,7 +115,7 @@ synthetic fixture:
 
 ![Three revisions and stale assessment after restore](assets/revision-stale-assessment.jpg)
 
-Validation on October 10, 2026: all **200 tests** passed with
+Validation on October 10, 2026: all **201 tests** passed with
 `python -m unittest discover -s tests -q`, including Streamlit AppTest. New tests
 cover proposal/observation separation, original finding state, append-only history,
 restore, unsaved edit exclusion, stale revisions/approvals/configuration/evidence/

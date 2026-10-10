@@ -334,7 +334,11 @@ def batch_validity(store, sid, bid):
         # A new independent capture alone does not revoke an unaffected exact action.
         # Readiness still rechecks its frozen target/value. Assessments bind the full capture.
         context_changed = "assessment_context" in a and {k: v for k, v in a["assessment_context"].items() if k != "snapshot_hash"} != {k: v for k, v in context_binding(store, sid, r).items() if k != "snapshot_hash"}
-        if r["revision"] != a["revision"] or context_changed or not readiness(store, sid, r, target=a.get("target"))["ready"] or invalidated or changed_failure:
+        # Pending approval needs a current assessment. An already approved exact
+        # action survives a capture refresh only while its frozen value/target,
+        # evidence/configuration and mandatory factual/technical checks still hold.
+        ready = readiness(store, sid, r, target=a.get("target"), check_assessment=not approvals)
+        if r["revision"] != a["revision"] or context_changed or not ready["ready"] or invalidated or changed_failure:
             invalid.append(a["action_id"])
     return invalid
 
