@@ -11,7 +11,12 @@ approval, but has no CMS writer or deployment integration.
    static copies are supplementary visual evidence, not a CMS layout certificate.
    Preserve the original public baseline and previous proposal versions.
 
-2. **Resolve facts and scope.** The owner/clinician confirms actual services,
+2. **Revise and assess, then resolve facts and scope.** Use **Edit / Revise
+   recommendation** or an exact action's **Edit / Revise proposal**, save a new
+   revision and **Evaluate this saved revision**. Compare/restore proposals without
+   changing observations, recommendation state or approval. See the
+   [revision workflow](recommendation-revisions.md) for model-review availability
+   and the private local handoff. The owner/clinician confirms actual services,
    location and clinical wording. In **Exact publication review**, open each
    action, enter its factual confirmation source, check the responsible-owner/
    clinician confirmation and **Save new proposal revision**. Never use a public

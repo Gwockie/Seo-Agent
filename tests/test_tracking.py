@@ -531,17 +531,17 @@ class TrackingTests(TrackingFixture, unittest.TestCase):
         self.assertTrue(t.rows(restored, "human_approvals", self.sid)[0]["payload"]["history_only"])
 
     def test_old_database_additive_migration_preserves_journal(self):
-        from seo_agent.storage import TRACKING_TABLES
+        from seo_agent.storage import TRACKING_TABLES, EVALUATION_TABLES
         cid = self.store.add_change(self.sid, date="2026-10-06", action="Unspecified historical fix", verification="user-reported")
         with self.store.db() as db:
-            for name in TRACKING_TABLES:
+            for name in EVALUATION_TABLES | TRACKING_TABLES:
                 db.execute("DROP TABLE " + name)
             db.execute("PRAGMA user_version=1")
         reopened = Store(self.store.root)
         self.assertEqual(reopened.changes(self.sid)[0]["id"], cid)
         self.assertEqual(t.actions(reopened, self.sid), [])
         with reopened.db() as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
 
 
 class TrendTests(TrackingFixture, unittest.TestCase):

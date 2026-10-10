@@ -103,7 +103,7 @@ def proposals(store, sid, aid):
         identity, revision, a = r["action_id"], r["revision"], r["payload"]
         key = f"{sid}:{identity}:{revision}"
         ready = tracking.readiness(store, sid, r)
-        with st.expander(a["action_kind"] + " · " + a["url"] + f" · revision {revision}"):
+        with st.expander(a["action_kind"] + " · " + a["url"] + f" · revision {revision}", expanded=st.session_state.get(sid + ":edit_action") == identity):
             st.text("Current: " + (a["current"] if a["current"] is not None else "Unknown") + "\nProposed: " + a["proposed"])
             st.text("Reason: " + a["rationale"] + "\nExpectation: " + a["expected_effect"] + "\nMeasure: " + a["measurement"])
             st.text("Validation: " + a["validation"] + "\nRollback: " + a["rollback"])
@@ -111,28 +111,8 @@ def proposals(store, sid, aid):
             for c in a["confirmations"]:
                 st.text("Factual assertion: " + c["item"] + " · " + c["status"] + " · " + (c["source"] or "source unavailable"))
             st.caption("Ready for frozen review" if ready["ready"] else "Review incomplete: " + "; ".join(ready["reasons"]))
-            with st.form(key + ":revision"):
-                current = st.text_area("Exact current value", a["current"] or "", key=key + ":current", max_chars=8000)
-                proposed = st.text_area("Exact proposed value", a["proposed"], key=key + ":proposed", max_chars=8000)
-                rationale = st.text_area("Rationale", a["rationale"], key=key + ":rationale", max_chars=4000)
-                expected = st.text_area("Expected effect", a["expected_effect"], key=key + ":expected", max_chars=4000)
-                validation = st.text_area("Validation plan", a["validation"], key=key + ":validation", max_chars=4000)
-                rollback = st.text_area("Rollback plan", a["rollback"], key=key + ":rollback", max_chars=4000)
-                facts = st.text_area("Factual items (one per line)", "\n".join(c["item"] for c in a["confirmations"]), key=key + ":fact_items", max_chars=10000)
-                confirmed = st.checkbox("I have confirmed these factual items with the responsible owner/clinician", key=key + ":facts")
-                source = st.text_input("Factual confirmation source", key=key + ":fact_source", max_chars=2000)
-                captured = page_tracking.latest_snapshot(store, sid, a["url"])
-                adopt = st.checkbox("Use the latest successful public check as this revision's capture source", key=key + ":adopt", disabled=not captured or captured["status"] != "complete")
-                if st.form_submit_button("Save new proposal revision"):
-                    try:
-                        value = {**a, "current": current, "proposed": proposed, "rationale": rationale, "expected_effect": expected, "validation": validation, "rollback": rollback,
-                            "confirmations": [{"item": item.strip(), "status": "confirmed" if confirmed else "pending", "source": source or None} for item in facts.splitlines() if item.strip()]}
-                        if adopt and captured:
-                            value.update(capture_time_utc=captured["checked"], current_source="Public snapshot " + captured["id"])
-                        tracking.save_action(store, sid, aid, value, revision=revision + 1)
-                        st.rerun()
-                    except ValueError:
-                        st.error("Revision rejected. Confirm sources and exact values; existing history preserved.")
+            from .proposal_ui import editor
+            editor(store, sid, r)
         if st.checkbox("Include " + a["action_kind"] + " on " + a["url"] + f" (r{revision})", key=key + ":include", disabled=not ready["ready"]):
             selected.append((identity, revision))
     if st.button("Freeze selected publication batch", key=sid + ":freeze:" + aid, disabled=not selected):
