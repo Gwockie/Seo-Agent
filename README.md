@@ -47,6 +47,12 @@ annotated persistent site/page trends are now available. Follow
 [tracking usage and receipt contracts](docs/automatic-change-tracking.md).
 Website implementation remains a separately authorized WordPress step.
 
+Follow [approval through publication](docs/approval-to-publication.md) for factual
+confirmation, current-value checks, frozen human approval, WordPress implementation
+and receipts. The next feature brief is
+[scheduled and threshold-triggered review generation](docs/review-generation-agent-prompt.md);
+it is a development prompt, not an enabled agent automation.
+
 Demo data lives separately in `workspace/demo`. Real data defaults to
 `workspace/private`; all private files, SQLite databases, raw evidence, credentials
 and reports are ignored by Git. No audits or credentials are bundled.
