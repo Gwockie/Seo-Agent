@@ -118,12 +118,20 @@ def run_snapshot(context: AuditContext, svc, *, progress=None, crawl_fn=crawl):
         stage_crawl["missing_priority_count"] = len(priorities - seen)
         if not crawled.empty and "status" in crawled:
             statuses = crawled.status.astype(str)
+            # Only the crawler's successful, explicit non-HTML classification
+            # exempts ancillary resources from HTML title requirements. It never
+            # supplies page content or satisfies a configured priority page.
+            non_html = (crawled.get("content_kind", pd.Series("", index=crawled.index)).eq("non_html")
+                        & statuses.eq("200"))
+            priority_rows = crawled.get("url", pd.Series("", index=crawled.index)).isin(priorities)
             unavailable = statuses.ne("200")
             if "title" in crawled:
-                unavailable |= crawled.title.fillna("").eq("")
+                unavailable |= ~non_html & crawled.title.fillna("").eq("")
             else:
-                unavailable |= True
-            stage_crawl["content_page_count"] = int((~unavailable).sum())
+                unavailable |= ~non_html
+            unavailable |= non_html & priority_rows
+            stage_crawl["content_page_count"] = int((~unavailable & ~non_html).sum())
+            stage_crawl["non_html_resource_count"] = int(non_html.sum())
             stage_crawl["unavailable_page_count"] = int(unavailable.sum())
             if "retry_after_seconds" in crawled:
                 stage_crawl["retry_after_seconds"] = int(pd.to_numeric(crawled.retry_after_seconds, errors="coerce").fillna(0).max())

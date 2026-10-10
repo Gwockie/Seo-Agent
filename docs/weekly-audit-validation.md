@@ -1,5 +1,30 @@
 # Weekly audit validation
 
+## Completeness correction — October 10, 2026
+
+Successful ancillary non-HTML responses are recorded explicitly and counted
+separately from usable HTML content. They no longer falsely make crawl coverage
+partial because they lack an HTML title. They cannot satisfy priority landing
+pages, and failed requests, unavailable HTML, missing priority pages or a crawl
+with no HTML content remain incomplete. Mislabeled HTML challenges also remain
+unavailable rather than receiving the non-HTML exemption.
+Safely parsed supported KML/sitemap XML roots also identify structured resources
+when the server supplies an incorrect HTML content type. Embedded HTML inside a
+KML description does not turn the XML document into an unavailable webpage.
+
+The canonical stable runtime passed **183 tests**, including the existing
+22 AppTest cases and three new completeness regressions, in 69.434 seconds.
+The new tests cover the actual synthetic crawler-to-snapshot path and seven
+failure/coverage cases. A restricted full-suite run stalled and was stopped;
+the successful full run used the normal Windows user with isolated synthetic
+workspaces. No live credentials or evidence were used by these tests.
+Private installation rollout, live source outcomes and scheduler records remain
+in protected local storage; they are not public GitHub artifacts. The dated
+development status below describes October 9, not a current installation's
+activation state.
+
+## Original development validation — October 9, 2026
+
 Validated October 9, 2026 on Windows with an isolated Python 3.13 environment
 installed from the existing hash-pinned `requirements-dev.lock`. Development used
 the managed worktree based on current `origin/main`, synthetic workspaces and a

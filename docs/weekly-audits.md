@@ -50,6 +50,13 @@ bounded crawl coverage and requested inspections update last complete. Empty
 performance exports are a completed request with demand unknown. Crawl needs
 usable content, no unavailable selected pages and no missing configured priority
 pages; inspections need every requested result without collection errors. A
+successfully fetched ancillary non-HTML resource remains recorded separately;
+it does not count as HTML content or satisfy a configured priority landing page.
+Such a resource does not by itself make HTML coverage incomplete. Failed resource
+requests and unavailable HTML still make the crawl partial. Supported KML and
+sitemap XML document roots are safely parsed without DTDs/entities and recognized
+even when a server incorrectly labels them as HTML. An extension or incorrect
+header never exempts an actual HTML challenge response. A
 Google verdict of FAIL/noindex can be fully collected evidence: completeness is
 not indexing or SEO health. A 50-page budget is bounded coverage, not certification
 of every page on a large website. Independent successful sources remain usable
