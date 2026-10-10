@@ -151,9 +151,9 @@ class LearningTests(unittest.TestCase):
 
     def test_old_backup_remains_restorable(self):
         # A real old schema contains neither journal table. Restore adds empty ones.
-        from seo_agent.storage import TRACKING_TABLES
+        from seo_agent.storage import TRACKING_TABLES, SCHEDULING_TABLES
         with self.store.db() as db:
-            for table in TRACKING_TABLES:
+            for table in TRACKING_TABLES | SCHEDULING_TABLES:
                 db.execute("DROP TABLE " + table)
             db.execute("DROP TABLE result_reviews")
             db.execute("DROP TABLE change_plans")

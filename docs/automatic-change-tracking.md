@@ -159,11 +159,12 @@ publication time. They cannot supply a precise date for before/after attribution
 Audit completion always imports immutable finalized daily sources. Opening the
 selected site and completing an audit may trigger a throttled public check; a
 manual refresh is also available. Persistent throttle records and one shared
-process worker/file lock prevent reruns and concurrent audit/check/backup jobs
+process worker/workspace-scoped file lock prevent reruns and concurrent audit/check/backup jobs
 from issuing duplicate collections. Interrupted checks retain their running record
 and can be retried after the throttle; no result is invented. Errors preserve
-prior evidence and appear in check history. No service, scheduler or notifications
-are installed. A closed app is not monitoring.
+prior evidence and appear in check history. Opening the app installs no service, task or notifications. Public tracking alone
+needs an open app; separately reviewed [weekly audits](weekly-audits.md) can invoke
+bounded tracking after collection while Streamlit is closed.
 
 `gsc_daily.csv` remains whole-site **byProperty**. New bounded
 `gsc_daily_pages.csv` exports date/page **byPage**, final web search, at most 50,000

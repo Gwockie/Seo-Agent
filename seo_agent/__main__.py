@@ -78,7 +78,44 @@ def main():
     receipt.add_argument('file', type=Path)
     refresh = sub.add_parser('tracking-refresh', help='Bounded read-only selected-site page check and daily-source import')
     refresh.add_argument('--site-id', required=True)
+    for name in ("weekly-worker", "weekly-collect", "weekly-run-now", "weekly-task-preview", "weekly-task-apply"):
+        cmd = sub.add_parser(name)
+        cmd.add_argument("--installation", type=Path, required=True)
+        if name in ("weekly-collect", "weekly-run-now"):
+            cmd.add_argument("--site-id", required=True)
+            cmd.add_argument("--trigger-id", required=True)
+        if name == "weekly-collect":
+            cmd.add_argument("--manual", action="store_true")
+        if name.startswith("weekly-task-"):
+            cmd.add_argument("--action", choices=("register", "disable", "remove"), default="register")
+        if name == "weekly-task-apply":
+            cmd.add_argument("--reviewed-sha256", required=True)
+    sub.add_parser("weekly-install", help="Explicit protected primary installation setup; no task registration")
+    weekly_save = sub.add_parser("weekly-save", help="Explicit per-site settings; disabled by default")
+    weekly_save.add_argument("--site-id", required=True)
+    weekly_save.add_argument("--weekday", type=int, default=0)
+    weekly_save.add_argument("--time", default="09:00")
+    weekly_save.add_argument("--timezone", default="America/New_York")
+    weekly_save.add_argument("--enable", action="store_true")
+    weekly_disable = sub.add_parser("weekly-disable")
+    weekly_disable.add_argument("--site-id", required=True)
+    weekly_status = sub.add_parser("weekly-status")
+    weekly_status.add_argument("--site-id", required=True)
     args = p.parse_args()
+    if args.command in ("weekly-worker", "weekly-collect", "weekly-run-now", "weekly-install"):
+        from .weekly_worker import dispatch, collect, initialize
+        if args.command == "weekly-install":
+            print(initialize(args.workspace))
+            return 0
+        if args.command == "weekly-collect":
+            return collect(args.installation, args.site_id, args.trigger_id, manual=args.manual)
+        return dispatch(args.installation, sid=args.site_id if args.command == "weekly-run-now" else None,
+                        trigger_id=args.trigger_id if args.command == "weekly-run-now" else None)
+    if args.command.startswith("weekly-task-"):
+        from .windows_tasks import preview, apply
+        result = preview(args.installation, args.action) if args.command == "weekly-task-preview" else apply(args.installation, args.action, args.reviewed_sha256)
+        print(json.dumps(result, indent=2))
+        return 0
     if args.command == 'app':
         if not 1024 <= args.port <= 65535:
             p.error('Use an unprivileged port')
@@ -104,13 +141,20 @@ def main():
     from .storage import credential_location
     secrets = credential_location(args.secrets)
     store = Store(args.workspace, enforce_protection=True)
-    if args.command in ('import-handoff', 'record-receipt'):
+    if args.command in ("weekly-save", "weekly-disable", "weekly-status"):
+        from .scheduling import save_schedule, disable, status
+        if args.command == "weekly-save":
+            save_schedule(store, args.site_id, {"weekday": args.weekday, "local_time": args.time, "timezone": args.timezone, "enabled": args.enable})
+        elif args.command == "weekly-disable":
+            disable(store, args.site_id)
+        print(json.dumps(status(store, args.site_id), indent=2))
+    elif args.command in ('import-handoff', 'record-receipt'):
         from .tracking import import_handoff, record_receipt, MAX_DOCUMENT
-        from .runner import run_lock, GLOBAL_LOCK
+        from .coordination import run_lock, workspace_lock
         require_protected(args.file.parent)
         if args.file.stat().st_size > MAX_DOCUMENT:
             raise ValueError('Tracking input exceeds 2 MiB')
-        with run_lock(GLOBAL_LOCK):
+        with run_lock(workspace_lock(store.root)):
             raw = args.file.read_bytes()
             result = import_handoff(store, args.site_id, args.audit_id, raw) if args.command == 'import-handoff' else record_receipt(store, args.site_id, raw)
         print('Local tracking record: ' + result)
@@ -159,7 +203,8 @@ def main():
         for item in records:
             print(f"{item.get('siteUrl')}\t{item.get('permissionLevel')}")
     elif args.command == 'snapshot':
-        from .runner import run_site, run_snapshot, run_lock, AuditContext, GLOBAL_LOCK
+        from .runner import run_site, run_snapshot, AuditContext
+        from .coordination import run_lock, workspace_lock
         from .gsc import services, service_for_credentials, validate_access
         from .credentials import load_connection
         settings = dict(days=args.days, lag_days=args.lag_days, max_pages=args.max_pages, inspect=args.inspect, inspect_limit=args.inspect_limit)
@@ -184,7 +229,7 @@ def main():
             validate_access(svc, args.site, args.url)
             stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
             ctx = AuditContext(new_id(), new_id(), config, ROOT / 'data' / stamp, ROOT / 'reports' / stamp, **settings)
-            with run_lock(GLOBAL_LOCK):
+            with run_lock(workspace_lock(store.root)):
                 manifest, _ = run_snapshot(ctx, svc, progress=print)
             print(f"Snapshot {manifest['status']}: {ctx.data_dir}; {ctx.reports_dir / 'snapshot.md'}")
     elif args.command == 'seed-original':

@@ -23,6 +23,10 @@ UA = "LocalSEOAudit/2.0 (authorized read-only audit)"
 MAX_BYTES = 2 * 1024 * 1024
 
 
+class TemporaryPublicError(ValueError):
+    pass
+
+
 def public_address(address: str) -> bool:
     try:
         addr = ipaddress.ip_address(address)
@@ -108,6 +112,41 @@ class PublicFetcher:
         self.session.mount("https://", PublicAdapter(max_retries=0))
 
     def get(self, url, *, rp=None, **_):
+        for attempt in range(2):
+            try:
+                response = self._get_once(url, rp=rp)
+            except TemporaryPublicError:
+                if attempt:
+                    raise
+                time.sleep(1)
+                continue
+            if response.status_code not in (429, 500, 502, 503, 504):
+                return response
+            # A challenged 2xx/403 response never enters recovery. Do not shorten
+            # a server's Retry-After; long delays defer to a later worker attempt.
+            delay = 1
+            raw = response.headers.get("Retry-After")
+            if raw:
+                from email.utils import parsedate_to_datetime
+                from datetime import datetime, timezone
+                try:
+                    delay = max(delay, int(raw))
+                except ValueError:
+                    try:
+                        delay = max(delay, (parsedate_to_datetime(raw) - datetime.now(timezone.utc)).total_seconds())
+                    except (TypeError, ValueError):
+                        return response
+            if rp is not None and hasattr(rp, "crawl_delay"):
+                delay = max(delay, rp.crawl_delay(UA) or rp.crawl_delay("*") or 0)
+                rate = rp.request_rate(UA) or rp.request_rate("*")
+                if rate:
+                    delay = max(delay, rate.seconds / rate.requests)
+            if delay > 30 or attempt:
+                response.retry_after_seconds = int(delay)
+                return response
+            time.sleep(delay)
+
+    def _get_once(self, url, *, rp=None):
         for _redirect in range(6):
             url = public_url(url)
             if urlsplit(url).netloc != self.host or (rp is not None and not rp.can_fetch(UA, url)):
@@ -140,8 +179,10 @@ class PublicFetcher:
                 response._content = b"".join(chunks)
                 response._content_consumed = True
                 return response
+            except requests.exceptions.SSLError:
+                raise ValueError("TLS validation failed; no retry") from None
             except requests.RequestException:
-                raise ValueError("Public request failed; check network/TLS/site availability") from None
+                raise TemporaryPublicError("Public request failed; check network/site availability") from None
             finally:
                 if response is not None:
                     response.close()

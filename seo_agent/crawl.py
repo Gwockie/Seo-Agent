@@ -12,8 +12,9 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-from .public_fetch import PublicFetcher, UA
+from .public_fetch import PublicFetcher, TemporaryPublicError, UA
 from .config import public_url, within_site
+from .content_safety import usable_html
 
 def normalize_url(url: str) -> str:
     url, _ = urldefrag(url)
@@ -32,6 +33,8 @@ def get_robot_parser(root_url: str, session: requests.Session) -> RobotFileParse
         resp = session.get(robots_url, timeout=15)
         # Other 2xx responses can be unfinished bot challenges, not robots rules.
         if resp.status_code == 200:
+            if "<html" in resp.text.casefold() or "<script" in resp.text.casefold():
+                raise ValueError("Robots source challenged; no crawl authorized")
             rp.parse(resp.text.splitlines())
         elif resp.status_code == 404:
             rp.parse([])
@@ -195,10 +198,13 @@ def crawl(root_url: str, out_csv, max_pages: int = 200, delay: float = 0.25, *, 
         raise
 
     seeds = {root_url}
+    priorities = [p.landing_page for p in config.phrases if p.active and p.landing_page and within_site(root_url, p.landing_page)] if config else []
+    seeds.update(priorities)
     for sm in discover_sitemaps(root_url, rp):
         seeds |= {u for u in sitemap_urls(sm, session, max_sitemaps=10, root_url=root_url, rp=rp) if same_host(root_url, u) and within_site(root_url, u)}
 
-    q = deque([root_url] + sorted(seeds - {root_url}))
+    first = list(dict.fromkeys([root_url] + priorities))
+    q = deque(first + sorted(seeds - set(first)))
     seen = set()
     rows = []
     inbound = defaultdict(int)
@@ -219,10 +225,18 @@ def crawl(root_url: str, out_csv, max_pages: int = 200, delay: float = 0.25, *, 
         try:
             resp = safe_get(url, root_url, session, rp)
         except (requests.RequestException, ValueError) as exc:
-            rows.append({"url": url, "status": "request_error", "error": str(exc)})
+            temporary = isinstance(exc, TemporaryPublicError) or (isinstance(exc, requests.RequestException) and not isinstance(exc, requests.exceptions.SSLError))
+            rows.append({"url": url, "status": "request_error", "category": "temporary_public" if temporary else "public_destination_or_tls_invalid",
+                         "error": "Public source unavailable; destination, TLS or request boundary"})
             continue
 
         ctype = resp.headers.get("content-type", "")
+        if resp.status_code != 200 or ("text/html" in ctype and not usable_html(resp.text)):
+            rows.append({"url": url, "final_url": resp.url, "status": "content_unavailable" if resp.status_code == 200 else resp.status_code,
+                         "http_status": resp.status_code, "content_type": ctype,
+                         "retry_after_seconds": getattr(resp, "retry_after_seconds", 0)})
+            # No challenge bypass or repeated attempts against this response.
+            continue
         if "text/html" not in ctype or urlsplit(resp.url).path.lower().endswith((".kml", ".xml")):
             rows.append({"url": url, "final_url": resp.url, "status": resp.status_code, "content_type": ctype})
             continue

@@ -7,11 +7,60 @@ from typing import Iterable
 
 import pandas as pd
 from googleapiclient.discovery import build
+import httplib2
+import google_auth_httplib2
+import time
+from email.utils import parsedate_to_datetime
+from datetime import timezone
 
 from .auth import get_credentials
 from .config import validate_property
 
 ROW_LIMIT = 25_000
+
+
+class AccessError(ValueError):
+    pass
+
+
+class RetryDeferredError(ValueError):
+    def __init__(self, seconds):
+        self.retry_after_seconds = max(0, int(seconds))
+        super().__init__("Google retry deferred until the server's Retry-After")
+
+
+def execute(request):
+    """At most three calls; Retry-After beyond one minute defers to job retry."""
+    from googleapiclient.errors import HttpError
+    for attempt in range(3):
+        try:
+            return request.execute()
+        except HttpError as exc:
+            code = int(exc.resp.status)
+            if code in (401, 403) and b'quota' not in exc.content.lower() and b'ratelimit' not in exc.content.lower():
+                raise AccessError("Exact read-only property access unavailable; reconnect selected connection") from None
+            if code not in (403, 429, 500, 502, 503, 504):
+                raise ValueError("Google source temporarily unavailable") from None
+            delay = 2 ** attempt
+            raw = exc.resp.get("retry-after")
+            if raw:
+                try:
+                    delay = max(delay, int(raw))
+                except ValueError:
+                    try:
+                        delay = max(delay, (parsedate_to_datetime(raw) - datetime.now(timezone.utc)).total_seconds())
+                    except (ValueError, TypeError):
+                        raise ValueError("Invalid retry policy") from None
+            if delay > 60:
+                raise RetryDeferredError(delay) from None
+            if attempt == 2:
+                raise ValueError("Google source temporarily unavailable") from None
+            time.sleep(delay)
+        except (OSError, httplib2.HttpLib2Error):
+            if attempt == 2:
+                raise ValueError("Google network unavailable") from None
+            time.sleep(2 ** attempt)
+
 
 def services(secret_dir: Path):
     creds = get_credentials(secret_dir)
@@ -21,18 +70,20 @@ def services(secret_dir: Path):
 def service_for_credentials(creds):
     from .credentials import validate_credentials
     validate_credentials(creds)
-    return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+    http = httplib2.Http(timeout=20)
+    transport = google_auth_httplib2.AuthorizedHttp(creds, http=http)
+    return build("searchconsole", "v1", http=transport, cache_discovery=False)
 
 
 def validate_access(svc, property_url, public_url):
     validate_property(property_url, public_url)
-    entries = svc.sites().list().execute().get("siteEntry", [])
+    entries = execute(svc.sites().list()).get("siteEntry", [])
     if not any(r.get("siteUrl") == property_url and r.get("permissionLevel") in {"siteOwner", "siteFullUser", "siteRestrictedUser"} for r in entries):
-        raise ValueError("Selected Google connection lacks access to the exact property")
+        raise AccessError("Selected Google connection lacks access to the exact property")
 
 def list_sites(secret_dir: Path) -> list[dict]:
     svc = services(secret_dir)
-    return svc.sites().list().execute().get("siteEntry", [])
+    return execute(svc.sites().list()).get("siteEntry", [])
 
 def _query_all(
     svc,
@@ -55,7 +106,7 @@ def _query_all(
             "type": "web",
             "aggregationType": "byPage" if "page" in dimensions else "byProperty",
         }
-        resp = svc.searchanalytics().query(siteUrl=site_url, body=body).execute()
+        resp = execute(svc.searchanalytics().query(siteUrl=site_url, body=body))
         rows = resp.get("rows", [])
         if not rows:
             break
@@ -128,7 +179,7 @@ def export_performance(
 
 def list_sitemaps(secret_dir: Path, site_url: str, *, svc=None) -> list[dict]:
     svc = svc or services(secret_dir)
-    return svc.sitemaps().list(siteUrl=site_url).execute().get("sitemap", [])
+    return execute(svc.sitemaps().list(siteUrl=site_url)).get("sitemap", [])
 
 def inspect_urls(
     secret_dir: Path,
@@ -144,15 +195,17 @@ def inspect_urls(
         if i >= limit:
             break
         try:
-            resp = inspection.urlInspection().index().inspect(
+            resp = execute(inspection.urlInspection().index().inspect(
                 body={
                     "inspectionUrl": url,
                     "siteUrl": site_url,
                     "languageCode": "en-US",
                 }
-            ).execute()
+            ))
             result = resp.get("inspectionResult", {})
             idx = result.get("indexStatusResult", {})
+            if not idx:
+                raise ValueError("Inspection source missing")
             records.append({
                 "url": url,
                 "verdict": idx.get("verdict"),
@@ -166,7 +219,13 @@ def inspect_urls(
                 "crawled_as": idx.get("crawledAs"),
                 "referring_urls": " | ".join(idx.get("referringUrls", [])),
             })
-        except Exception:
+        except (AccessError, RetryDeferredError):
+            raise
+        except Exception as exc:
+            from .credentials import ConnectionError
+            if isinstance(exc, ConnectionError):
+                raise
             records.append({"url": url, "error": "Google inspection unavailable; check access/quota/connectivity"})
-    pd.DataFrame(records, columns=["url", "verdict", "coverage_state", "robots_txt_state", "indexing_state", "last_crawl_time", "page_fetch_state", "google_canonical", "user_canonical", "crawled_as", "referring_urls", "error"]).to_csv(out_path, index=False)
+        finally:
+            pd.DataFrame(records, columns=["url", "verdict", "coverage_state", "robots_txt_state", "indexing_state", "last_crawl_time", "page_fetch_state", "google_canonical", "user_canonical", "crawled_as", "referring_urls", "error"]).to_csv(out_path, index=False)
     return len(records)

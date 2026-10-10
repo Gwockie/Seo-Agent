@@ -18,6 +18,20 @@ SERVICE = "LocalSEOAudit.Google.v1"
 MAX_BLOB_BYTES = 2560  # Windows generic credential limit; keyring encodes UTF-16LE.
 
 
+class ConnectionError(ValueError):
+    def __init__(self, category, retryable=False):
+        self.category, self.retryable = category, retryable
+        super().__init__("Selected Google connection needs attention: " + category + "; reconnect this exact connection if access is revoked. No fallback account.")
+
+
+def bounded_refresh_request():
+    request = Request()
+    def bounded(*args, **kwargs):
+        kwargs["timeout"] = 20
+        return request(*args, **kwargs)
+    return bounded
+
+
 def validate_scopes(values):
     if isinstance(values, str):
         values = values.split()
@@ -106,14 +120,42 @@ def load_connection(connection_id: str, vault=None):
         creds = Credentials.from_authorized_user_info(json.loads(raw), [SCOPE])
         validate_credentials(creds)
         if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(bounded_refresh_request())
+            except Exception as exc:
+                from google.auth.exceptions import TransportError
+                raise ConnectionError("temporary_google_network" if isinstance(exc, TransportError) else "access_reconnect", isinstance(exc, TransportError)) from None
             validate_credentials(creds)
-            vault.write(connection_id, creds.to_json())
+            payload = credential_payload(creds.to_json())
+            vault.write(connection_id, payload)
+            if vault.read(connection_id) != payload:
+                raise ConnectionError("vault_persistence_failed")
         if not creds.valid:
             raise ValueError("Selected connection requires reconnection")
+        original_refresh = creds.refresh
+        def persisted_refresh(request):
+            try:
+                try:
+                    original_refresh(request)
+                except Exception as exc:
+                    from google.auth.exceptions import TransportError
+                    raise ConnectionError("temporary_google_network" if isinstance(exc, TransportError) else "access_reconnect", isinstance(exc, TransportError)) from None
+                validate_credentials(creds)
+                payload = credential_payload(creds.to_json())
+                vault.write(connection_id, payload)
+                if vault.read(connection_id) != payload:
+                    raise ConnectionError("vault_persistence_failed")
+            except ConnectionError:
+                raise
+            except Exception:
+                raise ConnectionError("connection_scope_size_or_vault_invalid") from None
+        creds.refresh = persisted_refresh
+        creds._seo_connection_id = connection_id
         return creds
+    except ConnectionError:
+        raise
     except Exception:
-        raise ValueError("Selected Google connection is unavailable or invalid; reconnect it. No other account was used.") from None
+        raise ConnectionError("connection_scope_size_or_vault_invalid") from None
 
 
 def authorize_connection(connection_id: str, client_file: Path, *, account=None):
@@ -150,7 +192,7 @@ def migrate_legacy(token_file: Path, connection_id: str, site_config, *, vault=N
     validate_credentials(creds)
     if creds.expired and creds.refresh_token:
         try:
-            creds.refresh(Request())
+            creds.refresh(bounded_refresh_request())
         except Exception:
             raise ValueError("Legacy Google connection cannot be refreshed") from None
         validate_credentials(creds)
