@@ -1,8 +1,9 @@
 # Local app setup and migration
 
 Supported MVP: one user, Windows, Python 3.13, loopback browser. There is no
-deployment, CMS client, AI provider, schedule, conversion integration or paid data
-source. Website actions require the exact approval process in `AGENTS.md`.
+deployment, CMS client, AI provider, conversion integration or paid data
+source. Optional [weekly scheduling](weekly-audits.md) requires reviewed primary
+rollout and Windows task setup; it starts disabled. Website actions require the exact approval process in `AGENTS.md`.
 
 ## Install and launch
 

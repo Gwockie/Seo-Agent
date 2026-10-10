@@ -15,7 +15,8 @@ from seo_agent import tracking as t, page_tracking as p, trends
 from seo_agent.backup import _backup, _restore
 from seo_agent.config import SiteConfig
 from seo_agent.import_export import safe_csv, report_packet
-from seo_agent.runner import run_lock, GLOBAL_LOCK, Jobs
+from seo_agent.runner import run_lock, Jobs
+from seo_agent.coordination import workspace_lock
 from seo_agent.storage import Store, new_id, utc_now
 
 
@@ -492,7 +493,7 @@ class TrackingTests(TrackingFixture, unittest.TestCase):
             p.save_settings(self.store, self.sid, {"urls": ["https://other.example/"]})
 
     def test_check_audit_backup_file_lock_exclusion(self):
-        with run_lock(GLOBAL_LOCK), self.assertRaises(ValueError):
+        with run_lock(workspace_lock(self.store.root)), self.assertRaises(ValueError):
             p.refresh(self.store, self.sid, demo=True)
         self.assertEqual(t.rows(self.store, "tracking_checks", self.sid), [])
 
@@ -540,7 +541,7 @@ class TrackingTests(TrackingFixture, unittest.TestCase):
         self.assertEqual(reopened.changes(self.sid)[0]["id"], cid)
         self.assertEqual(t.actions(reopened, self.sid), [])
         with reopened.db() as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
 
 
 class TrendTests(TrackingFixture, unittest.TestCase):

@@ -13,6 +13,7 @@ from pydantic import Field
 
 from .config import StrictModel, public_url, within_site
 from .public_fetch import PublicFetcher, UA
+from .content_safety import usable_html
 from .storage import new_id, utc_now
 from .tracking import actions, canonical, rows, timestamp
 
@@ -73,6 +74,8 @@ def clean_content(soup):
 
 
 def extract(html, url, headers):
+    if not usable_html(html):
+        raise ValueError("Incomplete/challenged HTML is not page content")
     soup = BeautifulSoup(html, "html.parser")
     title = text_value(soup.title.get_text(" ")) if soup.title else None
     if not soup.html or not soup.body or not title or soup.find(id=re.compile(r"^(cf-chl|challenge|captcha)", re.I)) or title.casefold() in {"just a moment...", "just a moment…", "attention required! | cloudflare", "verify you are human", "access denied"}:
@@ -297,7 +300,7 @@ def observe(store, sid, *, audit_id=None, demo=False, fetcher_factory=PublicFetc
 
 def refresh(store, sid, *, manual=False, demo=False, audit_id=None, progress=None, already_locked=False):
     """Persistent throttle plus the same audit/backup file lock; no rerun cache."""
-    from .runner import GLOBAL_LOCK, run_lock
+    from .coordination import run_lock, workspace_lock
     from .trends import ingest_audits
     store.require_private_write()
     store.site(sid)
@@ -331,5 +334,5 @@ def refresh(store, sid, *, manual=False, demo=False, audit_id=None, progress=Non
         return result
     if already_locked:
         return run()
-    with run_lock(GLOBAL_LOCK):
+    with run_lock(workspace_lock(store.root)):
         return run()

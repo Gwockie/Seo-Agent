@@ -1,8 +1,9 @@
 """One read-only runner, used by CLI and UI; explicit context and bounded jobs."""
 from __future__ import annotations
 import json
-import os
-from contextlib import contextmanager
+import time
+from contextlib import nullcontext
+from .coordination import run_lock, workspace_lock
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,8 +21,19 @@ from .protection import require_protected
 from .rules import generate, read_csv, write_reports
 from .storage import Store, new_id, config_hash, utc_now
 
-GLOBAL_LOCK = Path(__file__).resolve().parent.parent / ".tmp" / "audit.lock"
 
+def save_manifest(path, manifest):
+    """Atomic checkpoint with bounded recovery from Windows sharing violations."""
+    pending = path.with_suffix(".pending")
+    pending.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    for attempt in range(6):
+        try:
+            pending.replace(path)
+            return
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(.05 * 2 ** attempt)  # Total backoff is 1.55 seconds.
 
 @dataclass(frozen=True)
 class AuditContext:
@@ -36,33 +48,6 @@ class AuditContext:
     inspect: bool = True
     inspect_limit: int = 20
 
-
-@contextmanager
-def run_lock(path: Path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+b") as handle:
-        try:
-            handle.seek(0)
-            if not handle.read(1):
-                handle.write(b"0")
-                handle.flush()
-            handle.seek(0)
-            if os.name == "nt":
-                import msvcrt
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            raise ValueError("An audit, tracking check or backup is already running; wait for it to finish") from None
-        try:
-            yield
-        finally:
-            handle.seek(0)
-            if os.name == "nt":
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def run_snapshot(context: AuditContext, svc, *, progress=None, crawl_fn=crawl):
@@ -85,17 +70,29 @@ def run_snapshot(context: AuditContext, svc, *, progress=None, crawl_fn=crawl):
     ctx.data_dir.mkdir(parents=True, exist_ok=True)
     ctx.reports_dir.mkdir(parents=True, exist_ok=True)
 
+    def checkpoint():
+        save_manifest(ctx.data_dir / "manifest.json", manifest)
+
     def stage(name, fn):
+        stages[name] = {"status": "running"}
+        checkpoint()
         if progress:
             progress(name)
         try:
             value = fn()
             stages[name] = {"status": "complete", "finished_utc": utc_now()}
             return value
-        except Exception:
+        except Exception as exc:
+            from .gsc import AccessError
+            from .credentials import ConnectionError
+            category = "access" if isinstance(exc, AccessError) else exc.category if isinstance(exc, ConnectionError) else "source_unavailable"
             message = "Public website crawl unavailable; check robots.txt, bot protection, network and destination boundaries." if name == "crawl" else "Source unavailable; check selected account, property, network, quota and destination boundaries."
-            stages[name] = {"status": "failed", "message": message, "finished_utc": utc_now()}
+            stages[name] = {"status": "failed", "category": category, "message": message, "finished_utc": utc_now()}
+            if getattr(exc, "retry_after_seconds", None):
+                stages[name]["retry_after_seconds"] = exc.retry_after_seconds
             return None
+        finally:
+            checkpoint()
 
     for period, dates in (("gsc_current", window["current"]), ("gsc_previous", window["previous"])):
         destination = ctx.data_dir if period == "gsc_current" else ctx.data_dir / "comparison"
@@ -113,12 +110,28 @@ def run_snapshot(context: AuditContext, svc, *, progress=None, crawl_fn=crawl):
             (ctx.data_dir / "gsc_sitemaps.json").write_text(json.dumps(records, indent=2), encoding="utf-8")
         stage("sitemaps", sitemaps)
     crawled = stage("crawl", lambda: crawl_fn(ctx.config.url, ctx.data_dir / "crawl.csv", max_pages=ctx.max_pages, config=ctx.config, progress=progress))
-    if crawled is not None and not crawled.empty and "status" in crawled:
-        unavailable = crawled.status.astype(str).isin(["request_error", "blocked_by_robots"]) | pd.to_numeric(crawled.status, errors="coerce").eq(202)
-        if unavailable.any():
-            stages["crawl"]["status"] = "partial"
-            stages["crawl"]["unavailable_page_count"] = int(unavailable.sum())
-            stages["crawl"]["message"] = "Some public page content was unavailable; request failures, robots restrictions or HTTP 202 responses cannot establish page content or indexing health."
+    if crawled is not None:
+        priorities = {p.landing_page for p in ctx.config.phrases if p.active and p.landing_page}
+        seen = set(crawled.get("url", []))
+        stage_crawl = stages["crawl"]
+        stage_crawl["page_count"] = len(crawled)
+        stage_crawl["missing_priority_count"] = len(priorities - seen)
+        if not crawled.empty and "status" in crawled:
+            statuses = crawled.status.astype(str)
+            unavailable = statuses.ne("200")
+            if "title" in crawled:
+                unavailable |= crawled.title.fillna("").eq("")
+            else:
+                unavailable |= True
+            stage_crawl["content_page_count"] = int((~unavailable).sum())
+            stage_crawl["unavailable_page_count"] = int(unavailable.sum())
+            if "retry_after_seconds" in crawled:
+                stage_crawl["retry_after_seconds"] = int(pd.to_numeric(crawled.retry_after_seconds, errors="coerce").fillna(0).max())
+        else:
+            stage_crawl.update(content_page_count=0, unavailable_page_count=0)
+        if stage_crawl["unavailable_page_count"] or stage_crawl["missing_priority_count"] or not stage_crawl["content_page_count"]:
+            stage_crawl["status"] = "partial" if stage_crawl["page_count"] else "failed"
+            stage_crawl["message"] = "Bounded crawl coverage incomplete; unavailable content cannot establish indexing health."
     if ctx.inspect and svc is not None:
         priorities = list(dict.fromkeys(p.landing_page for p in ctx.config.phrases if p.active and p.landing_page))
         other = [] if crawled is None or "final_url" not in crawled else crawled.loc[crawled["status"].astype(str).eq("200"), "final_url"].dropna().tolist()
@@ -130,10 +143,12 @@ def run_snapshot(context: AuditContext, svc, *, progress=None, crawl_fn=crawl):
                 scoped.append(url)
             except ValueError:
                 pass
-        urls = scoped
+        urls = scoped[:ctx.inspect_limit]
         stage("inspection", lambda: inspect_urls(None, ctx.config.gsc_property, urls, ctx.data_dir / "url_inspection.csv", limit=ctx.inspect_limit, svc=svc))
         inspected = read_csv(ctx.data_dir / "url_inspection.csv")
-        if not inspected.empty and "error" in inspected and inspected.error.astype(str).ne("").any():
+        stages["inspection"]["requested_count"] = len(urls)
+        stages["inspection"]["result_count"] = len(inspected)
+        if stages["inspection"]["status"] == "complete" and (not urls or len(inspected) != len(urls) or ("error" in inspected and inspected.error.fillna("").astype(str).ne("").any())):
             stages["inspection"]["status"] = "partial"
     else:
         stages["inspection"] = {"status": "unavailable", "message": "Inspection disabled or no authorized connection"}
@@ -145,19 +160,19 @@ def run_snapshot(context: AuditContext, svc, *, progress=None, crawl_fn=crawl):
         opp.to_csv(ctx.data_dir / "opportunities.csv", index=False)
     findings = generate(ctx.config, ctx.site_id, ctx.audit_id, frames, resolved)
     statuses = [s["status"] for s in stages.values()]
-    manifest["status"] = "complete" if all(s == "complete" for s in statuses if s != "unavailable") and stages["gsc_current"]["status"] == "complete" else "partial" if "complete" in statuses else "failed"
+    manifest["status"] = "complete" if all(s == "complete" for s in statuses) and stages["gsc_current"]["status"] == "complete" else "partial" if "complete" in statuses else "failed"
     manifest["finished_utc"] = utc_now()
     write_reports(ctx.config, ctx.site_id, ctx.audit_id, ctx.data_dir, ctx.reports_dir, findings, manifest)
-    (ctx.data_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    checkpoint()
     return manifest, findings
 
 
-def run_site(store: Store, site_id, *, request_id=None, expected_config_hash=None, demo=False, progress=None, **settings):
+def run_site(store: Store, site_id, *, request_id=None, expected_config_hash=None, demo=False, progress=None, already_locked=False, **settings):
     windows(settings.get("days", 28), settings.get("lag_days", 3))
     if not 1 <= settings.get("max_pages", 50) <= 200 or not 1 <= settings.get("inspect_limit", 20) <= 100:
         raise ValueError("Invalid bounded audit settings")
     aid = request_id or new_id()
-    with run_lock(GLOBAL_LOCK):
+    with nullcontext() if already_locked else run_lock(workspace_lock(store.root)):
         prior = [r for r in store.audits(site_id) if r["id"] == aid]
         if prior:
             return aid  # Persistent request ID is idempotent across UI reruns.
@@ -183,11 +198,18 @@ def run_site(store: Store, site_id, *, request_id=None, expected_config_hash=Non
             manifest, findings = run_snapshot(context, svc, progress=progress, crawl_fn=crawl_fn)
             manifest["synthetic"] = demo
             if demo:
-                (data / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+                save_manifest(data / "manifest.json", manifest)
             store.save_findings(site_id, aid, findings)
             store.finish_audit(site_id, aid, manifest["status"], manifest)
         except Exception:
-            manifest = {"status": "failed", "synthetic": demo, "message": "Audit could not complete. Preserved stages are diagnostic only."}
+            manifest = {}
+            try:
+                saved = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
+                if saved.get("site_id") == site_id and saved.get("audit_id") == aid:
+                    manifest = saved
+            except (OSError, ValueError):
+                pass
+            manifest.update(status="failed", synthetic=demo, message="Audit could not complete. Preserved stages are diagnostic only.")
             store.finish_audit(site_id, aid, "failed", manifest)
             raise ValueError("Audit failed; preserved partial evidence is available in history") from None
         from .page_tracking import refresh
@@ -259,3 +281,26 @@ class Jobs:
     def busy(self):
         with self.guard:
             return bool(self.current and not self.records[self.current]["future"].done())
+
+    def submit_weekly(self, store, sid, request_id, *, demo=False):
+        from . import scheduling as weekly
+        key = (str(store.root), sid, "weekly:" + request_id)
+        with self.guard:
+            if key in self.records:
+                return key
+            if self.current and not self.records[self.current]["future"].done():
+                raise ValueError("Another operation is running")
+            def run():
+                if not demo:
+                    from .weekly_worker import dispatch
+                    return dispatch(store.root / "weekly-installation.json", sid=sid, trigger_id=request_id)
+                with run_lock(workspace_lock(store.root)):
+                    weekly.reconcile(store)
+                    attempt = weekly.claim(store, sid, manual=True, trigger_id=request_id)
+                    if attempt:
+                        aid = run_site(store, sid, request_id=attempt["request_id"], already_locked=True, demo=True,
+                                       days=28, lag_days=3, max_pages=50, inspect=True, inspect_limit=20)
+                        return weekly.finish(store, attempt, audit_id=aid)
+            self.records[key] = {"site_id": sid, "progress": "Bounded headless worker", "kind": "tracking", "future": self.executor.submit(run)}
+            self.current = key
+        return key

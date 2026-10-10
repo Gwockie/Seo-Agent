@@ -38,6 +38,10 @@ The next agreed [change-to-results workflow](docs/seo-change-workflow.md) has
 separate copyable prompts for [building tracking](docs/change-tracking-agent-prompt.md)
 and [continuing Meadow & Mind's audit](docs/meadow-and-mind-agent-prompt.md) in parallel.
 
+Weekly read-only audit scheduling is available with disabled defaults, durable
+attempts and a reviewed Windows Task Scheduler setup. See [weekly audits](docs/weekly-audits.md)
+for signed-in-user/availability limits and protected primary rollout.
+
 Automatic receipts, exact human batch review, public change observations and
 annotated persistent site/page trends are now available. Follow
 [tracking usage and receipt contracts](docs/automatic-change-tracking.md).

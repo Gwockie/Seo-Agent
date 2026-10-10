@@ -24,6 +24,7 @@ from seo_agent.storage import Store, new_id
 from seo_agent.setup_fields import service_rows, services_from_rows, facts_from_rows, rule_rows, overrides_from_rows, phrase_rows, phrases_from_rows
 from seo_agent.learning import METRICS, create_plan, plans, link_change, compare, save_review, reviews, explanation
 from seo_agent import tracking_ui
+from seo_agent import scheduling_ui
 
 ROOT = Path(__file__).resolve().parent
 DEMO = os.environ.get("SEO_DEMO") == "1"
@@ -284,6 +285,7 @@ def choose_audit(store, sid):
 
 
 def audit_view(store, sid, config):
+    scheduling_ui.controls(store, sid, jobs(), demo=DEMO)
     protection = protection_for_ui(store)
     with st.form("launch_" + sid):
         days = st.selectbox("Days per comparison window", [28, 90])
@@ -609,7 +611,7 @@ def main():
     st.caption("One user · read-only collection · site-scoped evidence · local proposed edits")
     try:
         store = Store(WORKSPACE, enforce_protection=not DEMO)
-    except ProtectionError as exc:
+    except (ProtectionError, ValueError) as exc:
         st.warning(str(exc))
         st.info("Live setup and collection are disabled. Restrict access to the private app folders, then restart the app. Disk encryption is optional for local use. Existing evidence and credentials remain in place.")
         st.code(f'python -m seo_agent --workspace "{WORKSPACE}" storage-check', language="powershell")

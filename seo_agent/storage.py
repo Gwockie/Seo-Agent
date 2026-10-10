@@ -6,7 +6,8 @@ import json
 import re
 import sqlite3
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext, closing
+from .coordination import run_lock, workspace_lock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -134,8 +135,18 @@ PRAGMA user_version=2;
 """
 
 
+SCHEDULING_TABLES = {"weekly_schedules", "weekly_attempts"}
+SCHEDULING_SCHEMA = """
+CREATE TABLE IF NOT EXISTS weekly_schedules(site_id TEXT PRIMARY KEY REFERENCES sites(id), payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS weekly_attempts(id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id),
+ scheduled TEXT NOT NULL, started TEXT NOT NULL, finished TEXT, request_id TEXT NOT NULL UNIQUE,
+ audit_id TEXT, payload TEXT NOT NULL, FOREIGN KEY(audit_id,site_id) REFERENCES audits(id,site_id));
+PRAGMA user_version=3;
+"""
+
+
 class Store:
-    def __init__(self, root: Path, *, legacy_root: Path | None = None, enforce_protection=False):
+    def __init__(self, root: Path, *, legacy_root: Path | None = None, enforce_protection=False, already_locked=False):
         self.enforce_protection = enforce_protection
         self.root = private_location(root)
         self.initial_protection = None
@@ -150,12 +161,18 @@ class Store:
             self.initial_protection = require_protected(self.root)
         self.legacy_root = (legacy_root or Path(__file__).resolve().parent.parent).resolve()
         self.db_path = child_path(self.root, "app.sqlite")
-        with self.db() as db:
-            version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
-                raise ValueError("Unsupported workspace schema version")
-            db.executescript(SCHEMA)
-            db.executescript("BEGIN IMMEDIATE;\n" + TRACKING_SCHEMA + "\nCOMMIT;")
+        # Read-only fast path for current workspaces; never migrate ahead of the gate.
+        current = False
+        if self.db_path.exists():
+            with closing(sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True)) as check:
+                current = check.execute("PRAGMA user_version").fetchone()[0] == 3
+        if not current:
+            with nullcontext() if already_locked else run_lock(workspace_lock(self.root)):
+                with self.db() as db:
+                    version = db.execute("PRAGMA user_version").fetchone()[0]
+                    if version not in (0, 1, 2, 3):
+                        raise ValueError("Unsupported workspace schema version")
+                    db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + "\nCOMMIT;")
 
     def require_private_write(self):
         if self.enforce_protection:
@@ -280,7 +297,7 @@ class Store:
         row = self.audit(sid, aid)
         if row["legacy"] or row["status"] != "running":
             raise ValueError("Completed/historical evidence is immutable")
-        if status not in ("complete", "partial", "failed"):
+        if status not in ("complete", "partial", "failed", "interrupted"):
             raise ValueError("Invalid completion status")
         with self.db() as db:
             db.execute("UPDATE audits SET status=?,manifest=? WHERE site_id=? AND id=?", (status, json.dumps(manifest), sid, aid))

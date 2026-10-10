@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from .protection import require_protected
-from .storage import Store, child_path, checked_id, config_hash, private_location, TRACKING_TABLES
+from .storage import Store, child_path, checked_id, config_hash, private_location, TRACKING_TABLES, SCHEDULING_TABLES
 from .config import SiteConfig
 from .import_export import backup_evidence_path
 from .appearance import appearance_path, load_appearance
@@ -25,8 +25,8 @@ def backup(store: Store, destination: Path):
             if audit["legacy"]:
                 require_protected(Path(audit["data_path"]))
                 require_protected(Path(audit["reports_path"]))
-    from .runner import run_lock, GLOBAL_LOCK
-    with run_lock(GLOBAL_LOCK):
+    from .coordination import run_lock, workspace_lock
+    with run_lock(workspace_lock(store.root)):
         _backup(store, destination)
 
 
@@ -71,10 +71,12 @@ def restore(archive: Path, root: Path):
     private_location(root)
     require_protected(archive.parent)
     require_protected(root.parent)
-    return _restore(archive, root)
+    from .coordination import run_lock, workspace_lock
+    with run_lock(workspace_lock(root)):
+        return _restore(archive, root, already_locked=True)
 
 
-def _restore(archive, root):
+def _restore(archive, root, *, already_locked=False):
     root = root.resolve()
     if root.exists():
         raise ValueError("Restore requires a new workspace directory")
@@ -116,14 +118,14 @@ def _restore(archive, root):
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         original_tables = {"connections", "sites", "target_phrases", "audits", "recommendations", "change_events"}
         journal_tables = {"change_plans", "result_reviews"}
-        if tables not in (original_tables, original_tables | journal_tables, original_tables | journal_tables | TRACKING_TABLES):
+        if tables not in (original_tables, original_tables | journal_tables, original_tables | journal_tables | TRACKING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES):
             raise ValueError("Unexpected backup database schema")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2):
+        if version not in (0, 1, 2, 3):
             raise ValueError("Unsupported backup database version")
-        from .storage import SCHEMA, TRACKING_SCHEMA
+        from .storage import SCHEMA, TRACKING_SCHEMA, SCHEDULING_SCHEMA
         with closing(sqlite3.connect(":memory:")) as expected:
-            expected.executescript(SCHEMA + TRACKING_SCHEMA)
+            expected.executescript(SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA)
             for table in tables:
                 # Table names have already been checked against a fixed allowlist.
                 for pragma in ("table_info", "foreign_key_list"):
@@ -141,7 +143,7 @@ def _restore(archive, root):
             reports = child_path(root, "sites", sid, "audits", aid, "reports")
             data.mkdir(parents=True, exist_ok=True); reports.mkdir(parents=True, exist_ok=True)
             db.execute("UPDATE audits SET data_path=?,reports_path=?,legacy=0 WHERE id=? AND site_id=?", (str(data), str(reports), aid, sid))
-    store = Store(root)
+    store = Store(root, already_locked=already_locked)
     for site in store.sites():
         load_appearance(store, site["id"])
         from .learning import plans, validate_plan, reviews
@@ -154,4 +156,6 @@ def _restore(archive, root):
                 store.audit(site["id"], review["audit_id"])
     from .tracking import validate_restored_tracking
     validate_restored_tracking(store)
+    from .scheduling import validate_restored
+    validate_restored(store)
     return store
