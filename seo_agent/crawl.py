@@ -25,6 +25,25 @@ def normalize_url(url: str) -> str:
 def same_host(a: str, b: str) -> bool:
     return urlsplit(a).netloc.lower() == urlsplit(b).netloc.lower()
 
+def known_xml_resource(url: str, content: bytes) -> bool:
+    """Recognize inert structured resources even when mislabeled as HTML.
+
+    Extension or MIME alone never exempts an HTML error/challenge response.
+    The bounded response must safely parse to a supported document root.
+    """
+    suffix = urlsplit(url).path.lower()
+    if not suffix.endswith((".kml", ".xml")):
+        return False
+    try:
+        tag = ET.fromstring(content, forbid_dtd=True, forbid_entities=True, forbid_external=True).tag
+    except Exception:
+        return False
+    return (suffix.endswith(".kml") and tag == "{http://www.opengis.net/kml/2.2}kml") or (
+        suffix.endswith(".xml") and tag in {
+            "{http://www.sitemaps.org/schemas/sitemap/0.9}urlset",
+            "{http://www.sitemaps.org/schemas/sitemap/0.9}sitemapindex"})
+
+
 def get_robot_parser(root_url: str, session: requests.Session) -> RobotFileParser:
     robots_url = urljoin(root_url, "/robots.txt")
     rp = RobotFileParser()
@@ -231,14 +250,22 @@ def crawl(root_url: str, out_csv, max_pages: int = 200, delay: float = 0.25, *, 
             continue
 
         ctype = resp.headers.get("content-type", "")
-        if resp.status_code != 200 or ("text/html" in ctype and not usable_html(resp.text)):
+        if resp.status_code == 200 and known_xml_resource(resp.url, resp.content):
+            rows.append({"url": url, "final_url": resp.url, "status": resp.status_code, "content_type": ctype,
+                         "content_kind": "non_html"})
+            continue
+        # A mislabeled HTML challenge is still unavailable content, never an
+        # ancillary resource eligible for the non-HTML completeness exemption.
+        html_response = "text/html" in ctype or bool(re.search(r"<\s*(?:!doctype\s+html|html(?:\s|>))", resp.text, re.I))
+        if resp.status_code != 200 or (html_response and not usable_html(resp.text)):
             rows.append({"url": url, "final_url": resp.url, "status": "content_unavailable" if resp.status_code == 200 else resp.status_code,
                          "http_status": resp.status_code, "content_type": ctype,
                          "retry_after_seconds": getattr(resp, "retry_after_seconds", 0)})
             # No challenge bypass or repeated attempts against this response.
             continue
         if "text/html" not in ctype or urlsplit(resp.url).path.lower().endswith((".kml", ".xml")):
-            rows.append({"url": url, "final_url": resp.url, "status": resp.status_code, "content_type": ctype})
+            rows.append({"url": url, "final_url": resp.url, "status": resp.status_code, "content_type": ctype,
+                         "content_kind": "non_html"})
             continue
 
         row, links = analyze_html(url, resp.url, resp.status_code, resp.text, config=config)
@@ -247,6 +274,7 @@ def crawl(root_url: str, out_csv, max_pages: int = 200, delay: float = 0.25, *, 
                 row.pop(key, None)
             row["configured_location_present"] = bool(config.location and config.location.casefold() in BeautifulSoup(resp.text, "html.parser").get_text(" ", strip=True).casefold())
         row["content_type"] = ctype
+        row["content_kind"] = "html"
         row["x_robots_tag"] = resp.headers.get("X-Robots-Tag", "")
         row["internal_link_urls"] = json.dumps(sorted(links))
         rows.append(row)
