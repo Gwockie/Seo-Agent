@@ -159,12 +159,14 @@ def capture_target(store, sid, record):
 
 
 def observed_value(values, a, *, proposed=False, target=None, html=None):
+    kind = a["action_kind"]
+    # Metadata has its own exact page-level field; reading it does not require
+    # an existing baseline. Readiness separately requires an adopted baseline.
+    if kind in ("title", "canonical", "index_directive"):
+        return values.get(kind)
     candidate = a["proposed"] if proposed else a["current"]
     if candidate is None:
         return None
-    kind = a["action_kind"]
-    if kind in ("title", "canonical", "index_directive"):
-        return values.get(kind)
     if kind in ("text", "href"):
         if not target or not html or target["current"] != a["current"] or target["proposed"] != a["proposed"]:
             return None

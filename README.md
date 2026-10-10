@@ -5,6 +5,10 @@ Select an independent site, configure its goals and Google account reference, ru
 an audit, review evidence-backed recommendations and save local proposed edits.
 The original CLI and historical data/report paths remain available.
 
+Recommendations can be revised, compared/restored and assessed before exact human
+approval. See [revision and assessment workflow](docs/recommendation-revisions.md),
+including the synthetic UI demonstration and current model-review limitations.
+
 Website changes require explicit human approval of exact actions under
 [AGENTS.md](AGENTS.md). The app has no CMS write integration. Search Console uses
 only `https://www.googleapis.com/auth/webmasters.readonly`.

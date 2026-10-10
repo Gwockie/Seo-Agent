@@ -144,6 +144,14 @@ CREATE TABLE IF NOT EXISTS weekly_attempts(id TEXT PRIMARY KEY, site_id TEXT NOT
 PRAGMA user_version=3;
 """
 
+EVALUATION_TABLES = {"proposal_evaluations"}
+EVALUATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS proposal_evaluations(id TEXT PRIMARY KEY, site_id TEXT NOT NULL,
+ action_id TEXT NOT NULL, revision INTEGER NOT NULL, created TEXT NOT NULL, payload TEXT NOT NULL,
+ FOREIGN KEY(action_id,site_id,revision) REFERENCES tracking_actions(action_id,site_id,revision));
+PRAGMA user_version=4;
+"""
+
 
 class Store:
     def __init__(self, root: Path, *, legacy_root: Path | None = None, enforce_protection=False, already_locked=False):
@@ -165,14 +173,14 @@ class Store:
         current = False
         if self.db_path.exists():
             with closing(sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True)) as check:
-                current = check.execute("PRAGMA user_version").fetchone()[0] == 3
+                current = check.execute("PRAGMA user_version").fetchone()[0] == 4
         if not current:
             with nullcontext() if already_locked else run_lock(workspace_lock(self.root)):
                 with self.db() as db:
                     version = db.execute("PRAGMA user_version").fetchone()[0]
-                    if version not in (0, 1, 2, 3):
+                    if version not in (0, 1, 2, 3, 4):
                         raise ValueError("Unsupported workspace schema version")
-                    db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + "\nCOMMIT;")
+                    db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA + "\nCOMMIT;")
 
     def require_private_write(self):
         if self.enforce_protection:

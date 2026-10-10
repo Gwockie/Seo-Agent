@@ -88,6 +88,9 @@ class Action(StrictModel):
     validation: str = Field(min_length=1, max_length=4000)
     rollback: str = Field(min_length=1, max_length=4000)
     evidence: list[Evidence] = Field(max_length=50)
+    recommendation_id: str | None = Field(default=None, pattern=ID_PATTERN)
+    revision_note: str = Field(default="", max_length=4000)
+    restored_from: int | None = Field(default=None, ge=1, le=100)
 
 
 class Handoff(StrictModel):
@@ -101,7 +104,9 @@ class Handoff(StrictModel):
 
 def validate_action(store, sid, aid, raw):
     store.audit(sid, aid)
-    a = Action.model_validate(raw).model_dump()
+    a = Action.model_validate(raw).model_dump(exclude_unset=True)
+    if a.get("recommendation_id") and not any(r["id"] == a["recommendation_id"] for r in store.findings(sid, aid)):
+        raise ValueError("Recommendation must belong to this site/audit")
     if public_url(a["url"]) != a["url"] or not within_site(store.site(sid).url, a["url"]):
         raise ValueError("Exact selected-site URL required")
     if a["primary_measure"] not in METRICS:
@@ -137,7 +142,7 @@ def validate_action(store, sid, aid, raw):
 
 
 def rows(store, table, sid):
-    if table not in {"tracking_actions", "handoff_imports", "publication_batches", "human_approvals", "implementation_receipts", "public_snapshots", "outside_changes", "tracking_checks", "trend_sources", "tracking_reviews", "approval_invalidations"}:
+    if table not in {"tracking_actions", "handoff_imports", "publication_batches", "human_approvals", "implementation_receipts", "public_snapshots", "outside_changes", "tracking_checks", "trend_sources", "tracking_reviews", "approval_invalidations", "proposal_evaluations"}:
         raise ValueError("Unsupported tracking source")
     store.site(sid)
     with store.db() as db:
@@ -171,7 +176,7 @@ def save_action(store, sid, aid, raw, *, revision=1, plan_id=None):
     previous = next((r for r in actions(store, sid) if r["action_id"] == a["action_id"]), None)
     if type(revision) is not int or revision != (previous["revision"] + 1 if previous else 1) or revision > 100:
         raise ValueError("Append the next revision; history cannot be replaced")
-    if previous and (previous["audit_id"] != aid or previous["payload"]["url"] != a["url"] or previous["payload"]["action_kind"] != a["action_kind"]):
+    if previous and (previous["audit_id"] != aid or previous["payload"]["url"] != a["url"] or previous["payload"]["action_kind"] != a["action_kind"] or previous["payload"].get("recommendation_id") != a.get("recommendation_id")):
         raise ValueError("Action identity is immutable")
     if plan_id:
         p = plan(store, sid, plan_id)
@@ -179,6 +184,9 @@ def save_action(store, sid, aid, raw, *, revision=1, plan_id=None):
             raise ValueError("Action must match the plan's site/audit/page")
     with store.db() as db:
         db.execute("BEGIN IMMEDIATE")
+        latest_revision = db.execute("SELECT MAX(revision) FROM tracking_actions WHERE site_id=? AND action_id=?", (sid, a["action_id"])).fetchone()[0] or 0
+        if revision != latest_revision + 1:
+            raise ValueError("Proposal changed while saving; reopen the latest revision")
         if db.execute("SELECT 1 FROM tracking_actions WHERE action_id=? AND site_id<>?", (a["action_id"], sid)).fetchone():
             raise ValueError("Action ID belongs to another site")
         db.execute("INSERT INTO tracking_actions VALUES (?,?,?,?,?,?,?)", (a["action_id"], sid, revision, aid, plan_id or (previous["plan_id"] if previous else None), utc_now(), canonical(a)))
@@ -187,7 +195,7 @@ def save_action(store, sid, aid, raw, *, revision=1, plan_id=None):
 
 def import_handoff(store, sid, aid, raw):
     store.require_private_write()
-    h = Handoff.model_validate(load_document(raw)).model_dump(by_alias=True)
+    h = Handoff.model_validate(load_document(raw)).model_dump(by_alias=True, exclude_unset=True)
     if h["site_id"] != sid or h["audit_id"] != aid:
         raise ValueError("Handoff belongs to a different site/audit")
     h["prepared_utc"] = timestamp(h["prepared_utc"])
@@ -246,7 +254,7 @@ def from_plan(store, sid, pid, kind, confirmations, validation, rollback):
 _CAPTURE_TARGET = object()
 
 
-def readiness(store, sid, record, *, now=None, target=_CAPTURE_TARGET):
+def readiness(store, sid, record, *, now=None, target=_CAPTURE_TARGET, check_assessment=True):
     from .page_tracking import latest_snapshot, observed_value, capture_target
     a = record["payload"]
     if target is _CAPTURE_TARGET:
@@ -266,10 +274,13 @@ def readiness(store, sid, record, *, now=None, target=_CAPTURE_TARGET):
         reasons.append("Settings cannot be verified by public-page capture")
     if a["current"] is None or not a["capture_time_utc"]:
         reasons.append("Capture time/current value is missing; append a refreshed revision")
+    from .proposal_review import mandatory_blockers, constraint_blockers
+    reasons.extend(mandatory_blockers(store, sid, record) if check_assessment else constraint_blockers(store, sid, record))
     return {"ready": not reasons, "reasons": reasons, "snapshot_id": snapshot["id"] if snapshot else None, "target": target}
 
 
 def freeze_batch(store, sid, selected):
+    from .proposal_review import context_binding
     store.require_private_write()
     if not selected or len(selected) > 100 or len(set(selected)) != len(selected):
         raise ValueError("Select 1–100 distinct exact actions")
@@ -289,6 +300,7 @@ def freeze_batch(store, sid, selected):
             raise ValueError("Overlapping actions cannot be approved together")
         targets.add(target)
         frozen.append({"action_id": identity, "revision": revision, "audit_id": r["audit_id"], "snapshot_id": ready["snapshot_id"], "action": a,
+                       "assessment_context": context_binding(store, sid, r),
                        **({"target": ready["target"]} if ready["target"] is not None else {})})
     payload = {"actions": frozen, "fingerprint": digest(frozen)}
     bid = new_id()
@@ -318,7 +330,15 @@ def batch_validity(store, sid, bid):
                               and v["payload"]["environment"] == "production" and v["payload"]["outcome"] == "failed"
                               and v["payload"]["actual"] is not None and v["payload"]["actual"] != v["payload"]["current"]
                               for v in rows(store, "implementation_receipts", sid))
-        if r["revision"] != a["revision"] or not readiness(store, sid, r, target=a.get("target"))["ready"] or invalidated or changed_failure:
+        from .proposal_review import context_binding
+        # A new independent capture alone does not revoke an unaffected exact action.
+        # Readiness still rechecks its frozen target/value. Assessments bind the full capture.
+        context_changed = "assessment_context" in a and {k: v for k, v in a["assessment_context"].items() if k != "snapshot_hash"} != {k: v for k, v in context_binding(store, sid, r).items() if k != "snapshot_hash"}
+        # Pending approval needs a current assessment. An already approved exact
+        # action survives a capture refresh only while its frozen value/target,
+        # evidence/configuration and mandatory factual/technical checks still hold.
+        ready = readiness(store, sid, r, target=a.get("target"), check_assessment=not approvals)
+        if r["revision"] != a["revision"] or context_changed or not ready["ready"] or invalidated or changed_failure:
             invalid.append(a["action_id"])
     return invalid
 
@@ -487,6 +507,7 @@ def packet(store, sid, aid):
         "approval_invalidations": [r for r in rows(store, "approval_invalidations", sid) if r["action_id"] in identities],
         "receipts": receipts,
         "reviews": [r for r in rows(store, "tracking_reviews", sid) if r["action_id"] in identities],
+        "assessments": [r for r in rows(store, "proposal_evaluations", sid) if r["action_id"] in identities],
         "snapshots": [r for r in rows(store, "public_snapshots", sid) if r["audit_id"] == aid or r["id"] in snapshot_ids],
         "outside_changes": outside,
         "trends": [r for r in rows(store, "trend_sources", sid) if r["audit_id"] == aid]}).encode("utf-8")

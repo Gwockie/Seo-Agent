@@ -457,6 +457,18 @@ def recommendations(store, sid, config):
                 st.text(f.get("measurement", "Measurement plan unavailable."))
                 st.text("Facts to confirm: " + "; ".join(f.get("confirmations", [])))
                 st.text("Evidence: " + "; ".join(f"{ref['file']} row {ref['row']}" for ref in f.get("evidence", [])))
+                from seo_agent import proposal_review
+                linked = next((r for r in tracking_ui.tracking.actions(store, sid) if r["payload"].get("recommendation_id") == row["id"]), None)
+                kinds = ["title", "text", "href", "canonical", "index_directive", "setting"]
+                default_kind = linked["payload"]["action_kind"] if linked else {"canonical": "canonical", "indexing": "index_directive", "broken_link": "href"}.get(f.get("rule"), "title")
+                kind = st.selectbox("Exact proposal field", kinds, index=kinds.index(default_kind), key=sid + ":finding_kind:" + row["id"], disabled=linked is not None)
+                if st.button("Edit / Revise recommendation", key=sid + ":revise_finding:" + row["id"]):
+                    try:
+                        identity = proposal_review.from_finding(store, sid, aid, row["id"], kind)
+                        st.session_state[sid + ":edit_action"] = identity
+                        st.rerun()
+                    except ValueError:
+                        st.error("Choose an exact selected-site page/field with own-audit evidence. This recommendation may need a separately scoped action.")
                 if st.button("Prepare a tracking plan", key=sid + ":plan_finding:" + row["id"]):
                     st.session_state[sid + ":plan_seed"] = {"audit_id": aid, "title": f.get("category", "Recommendation"), "url": f.get("url", ""),
                         "why": f.get("detail", ""), "expected_effect": expected, "measurement": f.get("measurement", ""),
