@@ -53,6 +53,11 @@ and receipts. The next feature brief is
 [scheduled and threshold-triggered review generation](docs/review-generation-agent-prompt.md);
 it is a development prompt, not an enabled agent automation.
 
+Additional development handoffs cover [editing and evaluating recommendation
+revisions](docs/recommendation-editing-agent-prompt.md), followed by
+[publishing exact approved changes](docs/publishing-agent-prompt.md). These briefs
+include model/effort recommendations and do not authorize production writes.
+
 Demo data lives separately in `workspace/demo`. Real data defaults to
 `workspace/private`; all private files, SQLite databases, raw evidence, credentials
 and reports are ignored by Git. No audits or credentials are bundled.
