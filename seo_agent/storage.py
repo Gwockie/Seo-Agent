@@ -152,6 +152,16 @@ CREATE TABLE IF NOT EXISTS proposal_evaluations(id TEXT PRIMARY KEY, site_id TEX
 PRAGMA user_version=4;
 """
 
+PUBLISHING_TABLES = {"cms_destinations", "cms_reviews", "cms_authorizations", "cms_attempts", "cms_events"}
+PUBLISHING_SCHEMA = """
+CREATE TABLE IF NOT EXISTS cms_destinations(site_id TEXT PRIMARY KEY REFERENCES sites(id), payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS cms_reviews(id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id), created TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS cms_authorizations(id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id), review_id TEXT NOT NULL REFERENCES cms_reviews(id), created TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(review_id));
+CREATE TABLE IF NOT EXISTS cms_attempts(id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id), review_id TEXT NOT NULL REFERENCES cms_reviews(id), action_id TEXT NOT NULL, revision INTEGER NOT NULL, direction TEXT NOT NULL, created TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(site_id,action_id,revision,direction));
+CREATE TABLE IF NOT EXISTS cms_events(id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id), attempt_id TEXT NOT NULL REFERENCES cms_attempts(id), created TEXT NOT NULL, payload TEXT NOT NULL);
+PRAGMA user_version=5;
+"""
+
 
 class Store:
     def __init__(self, root: Path, *, legacy_root: Path | None = None, enforce_protection=False, already_locked=False):
@@ -173,14 +183,14 @@ class Store:
         current = False
         if self.db_path.exists():
             with closing(sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True)) as check:
-                current = check.execute("PRAGMA user_version").fetchone()[0] == 4
+                current = check.execute("PRAGMA user_version").fetchone()[0] == 5
         if not current:
             with nullcontext() if already_locked else run_lock(workspace_lock(self.root)):
                 with self.db() as db:
                     version = db.execute("PRAGMA user_version").fetchone()[0]
-                    if version not in (0, 1, 2, 3, 4):
+                    if version not in (0, 1, 2, 3, 4, 5):
                         raise ValueError("Unsupported workspace schema version")
-                    db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA + "\nCOMMIT;")
+                    db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA + PUBLISHING_SCHEMA + "\nCOMMIT;")
 
     def require_private_write(self):
         if self.enforce_protection:

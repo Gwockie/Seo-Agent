@@ -48,8 +48,11 @@ those actions. Preserve the audit's read-only access and saved evidence.
 
 ## Current implementation
 
-The MVP has no CMS writer or deployment integration. Its before/after previews are
-offline local copies of captured public pages; they do not save anything to a CMS.
+The before/after previews are offline local copies of captured public pages; they
+do not save anything to a CMS. The separately configured, narrowly scoped
+[WordPress publisher](wordpress-publishing.md) requires a frozen exact batch,
+explicit CMS field mapping, human CMS authorization and an explicit Apply command.
+It has no automatic publication or deployment integration and defaults to disabled.
 A real staging URL, verified isolation and an authorized access method are still
 needed before an agent can implement recommendations there. Creating a staging
 environment on a live host may affect production resources and needs approval of

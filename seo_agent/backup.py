@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from .protection import require_protected
-from .storage import Store, child_path, checked_id, config_hash, private_location, TRACKING_TABLES, SCHEDULING_TABLES, EVALUATION_TABLES
+from .storage import Store, child_path, checked_id, config_hash, private_location, TRACKING_TABLES, SCHEDULING_TABLES, EVALUATION_TABLES, PUBLISHING_TABLES
 from .config import SiteConfig
 from .import_export import backup_evidence_path
 from .appearance import appearance_path, load_appearance
@@ -36,6 +36,19 @@ def _backup(store, destination):
         dbpath = Path(tmp) / "metadata.sqlite"
         with store.db() as source, closing(sqlite3.connect(dbpath)) as target:
             source.backup(target)
+            # Disable at backup creation as well as restore: even an interrupted
+            # extraction must never leave reusable CMS authority on disk.
+            with target:
+                tables = {r[0] for r in target.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                destinations = target.execute("SELECT site_id,payload FROM cms_destinations").fetchall() if "cms_destinations" in tables else []
+                for sid, raw in destinations:
+                    payload = {**json.loads(raw), "enabled": False, "credential_id": None}
+                    target.execute("UPDATE cms_destinations SET payload=? WHERE site_id=?", (json.dumps(payload), sid))
+                for table in ("cms_reviews", "cms_authorizations", "cms_attempts", "human_approvals"):
+                    if table not in tables:
+                        continue
+                    for identity, raw in target.execute(f"SELECT id,payload FROM {table}").fetchall():
+                        target.execute(f"UPDATE {table} SET payload=? WHERE id=?", (json.dumps({**json.loads(raw), "history_only": True}), identity))
         total = dbpath.stat().st_size
         with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED) as z:
             z.writestr("backup.json", json.dumps({"schema": 1, "credentials": "excluded; reconnect Google on restore"}))
@@ -118,14 +131,14 @@ def _restore(archive, root, *, already_locked=False):
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         original_tables = {"connections", "sites", "target_phrases", "audits", "recommendations", "change_events"}
         journal_tables = {"change_plans", "result_reviews"}
-        if tables not in (original_tables, original_tables | journal_tables, original_tables | journal_tables | TRACKING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES | EVALUATION_TABLES):
+        if tables not in (original_tables, original_tables | journal_tables, original_tables | journal_tables | TRACKING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES | EVALUATION_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES | EVALUATION_TABLES | PUBLISHING_TABLES):
             raise ValueError("Unexpected backup database schema")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3, 4):
+        if version not in (0, 1, 2, 3, 4, 5):
             raise ValueError("Unsupported backup database version")
-        from .storage import SCHEMA, TRACKING_SCHEMA, SCHEDULING_SCHEMA, EVALUATION_SCHEMA
+        from .storage import SCHEMA, TRACKING_SCHEMA, SCHEDULING_SCHEMA, EVALUATION_SCHEMA, PUBLISHING_SCHEMA
         with closing(sqlite3.connect(":memory:")) as expected:
-            expected.executescript(SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA)
+            expected.executescript(SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA + PUBLISHING_SCHEMA)
             for table in tables:
                 # Table names have already been checked against a fixed allowlist.
                 for pragma in ("table_info", "foreign_key_list"):
@@ -160,4 +173,6 @@ def _restore(archive, root, *, already_locked=False):
     validate_assessments(store)
     from .scheduling import validate_restored
     validate_restored(store)
+    from .publishing import disable_restored
+    disable_restored(store)
     return store

@@ -3,7 +3,10 @@
 Current workflow, October 10, 2026. Audit scheduling collects evidence; future
 [scheduled review generation](review-generation-agent-prompt.md) prepares drafts.
 Neither authorizes website writes. The app records exact proposals and human
-approval, but has no CMS writer or deployment integration.
+approval. An opt-in [WordPress heading publisher](wordpress-publishing.md) now adds
+CMS mapping review, separate exact CMS human authorization, explicit Apply,
+per-action receipts, reconciliation and authorized rollback. It remains disabled
+until a human configures the destination and separate protected CMS credentials.
 
 1. **Review the selected site and audit.** In **Recommendations & changes → Review
    together**, read Summary and Recommendations, then Proposed edits and the
@@ -55,7 +58,9 @@ approval, but has no CMS writer or deployment integration.
    [receipt interface](automatic-change-tracking.md), apply only its approved
    values and record the actual result. Authorization covers the enumerated
    production editor/autosave/publish effects; additional pages/settings require
-   their own exact approval. The app cannot perform this WordPress step today.
+   their own exact approval. For the narrow supported WordPress combination, use
+   the app's CMS review and Apply controls described in the publishing guide.
+   Unsupported editors/fields remain unavailable; do not guess a mapping.
 
 7. **Verify and record honestly.** Inspect the public rendered field and its exact
    location, relevant navigation/layout and canonical/index directives. Save a
