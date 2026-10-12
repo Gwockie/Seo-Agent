@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
@@ -114,6 +115,58 @@ class WordPressIntegration(unittest.TestCase):
             self.assertNotEqual(current['preserved'], state['preserved'])
         finally:
             self.fixture_php("delete_post_meta(3, 'synthetic_note');")
+
+    def test_configuration_change_while_waiting_for_page_lock_rejects_write(self):
+        # A separate CMS connection owns the page lock, then saves navigation while
+        # the publisher is blocked. The publisher must read the newly committed
+        # inventory, not an earlier repeatable-read snapshot.
+        self.fixture_php("$GLOBALS['wpdb']->query(\"DELETE FROM {$GLOBALS['wpdb']->posts} WHERE post_name='synthetic-race-navigation'\");")
+        before = self.client.state(3)
+        code = """require '/var/www/html/wp-load.php';
+        if (LSEO_INSTANCE !== 'synthetic-local-wordpress') { exit(2); }
+        $wpdb->query('START TRANSACTION');
+        $wpdb->get_row("SELECT * FROM {$wpdb->posts} WHERE ID=3 FOR UPDATE");
+        echo "locked\n"; flush(); fgets(STDIN);
+        $wpdb->insert($wpdb->posts, array('post_type'=>'wp_navigation', 'post_status'=>'publish',
+            'post_name'=>'synthetic-race-navigation', 'post_title'=>'Concurrent navigation', 'post_content'=>''));
+        $wpdb->query('COMMIT');
+        """
+        holder = subprocess.Popen(["docker", "exec", "-i", CONTAINER, "php", "-r", code],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(holder.stdout.readline().strip(), "locked")
+            with ThreadPoolExecutor(1) as pool:
+                write = pool.submit(self.client.write, 3, self.body(before, "Must not write under changed navigation"))
+                waiting = False
+                for _ in range(60):
+                    result = subprocess.run(["docker", "exec", "lseo-publishing-test-db-1", "mariadb",
+                        "-uroot", "-psynthetic-local-only", "-Nse", "SELECT COUNT(*) FROM information_schema.INNODB_LOCK_WAITS"],
+                        capture_output=True, text=True, check=True)
+                    if int(result.stdout.strip()) > 0:
+                        waiting = True
+                        break
+                    time.sleep(0.1)
+                holder.communicate("commit\n", timeout=10)
+                self.assertTrue(waiting, "Publisher did not reach the locked page")
+                with self.assertRaises(CMSFailure):
+                    write.result(timeout=20)
+            self.assertEqual(self.client.state(3)["content"], before["content"])
+        finally:
+            if holder.poll() is None:
+                holder.communicate("commit\n", timeout=10)
+            self.fixture_php("$GLOBALS['wpdb']->query(\"DELETE FROM {$GLOBALS['wpdb']->posts} WHERE post_name='synthetic-race-navigation'\");")
+
+    def test_literal_entities_are_not_silently_decoded(self):
+        before = self.client.state(3)
+        proposed = "Literal &amp; and &#65; text"
+        try:
+            self.client.write(3, self.body(before, proposed))
+            self.assertEqual(self.client.state(3)["headings"][0]["text"], proposed)
+            rendered(self.client.public(before["url"]), "service", proposed)
+        finally:
+            state = self.client.state(3)
+            if state["headings"][0]["text"] != before["headings"][0]["text"]:
+                self.client.write(3, self.body(state, before["headings"][0]["text"]))
 
 
 if __name__ == "__main__":

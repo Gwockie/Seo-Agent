@@ -78,8 +78,15 @@ click the human configuration/approval/apply controls on someone's behalf.
 
 ## Exact server effects and preservation
 
-Each request locks the page and metadata rows in an InnoDB transaction, compares
-the fresh installation/URL/content/metadata/configuration token, then changes only
+Each request first locks the options and posts inventory (including insertion gaps)
+in a short InnoDB repeatable-read transaction, then locks the page metadata and compares
+the fresh installation/URL/content/metadata/configuration token. Cached option
+values must agree with fresh database values. This prevents navigation, global
+style, plugin-option or shared-content changes from racing the decision. These
+conservative locks can briefly delay other CMS writes; use this narrow adapter
+only on small supported sites and validate contention on isolated staging. Theme
+or core file deployments must be excluded during publication by host coordination;
+database locks cannot serialize filesystem deployment. The adapter changes only
 the approved heading's text bytes in `post_content` plus `post_modified` and
 `post_modified_gmt`. All other page bytes and metadata are preserved. It commits
 a unique request journal containing before/after content in the same transaction,
@@ -103,7 +110,12 @@ The app commits a unique attempt before sending a request. A workspace operation
 lock coordinates publishing with audit/backup/restore/review work. Final local
 approval checks and the HTTP write hold the SQLite write lock so a concurrent
 proposal save cannot slip between them. Attempts/events survive interruption;
-ordinary duplicate Apply clicks never resend an existing attempt.
+ordinary duplicate Apply clicks never resend an existing attempt. Attempt identity
+includes the stable home URL, installation ID and environment; credential rotation
+cannot reset it. A staging receipt does not consume a separately reviewed production
+action. Schema migration preserves old attempt IDs, destinations and events.
+Reconnecting to the same stable installation allows read-only reconciliation with
+the current credentials. It does not revive the old authorization to write.
 
 **Reconcile destination (read only)** reads the server request journal and current
 page. A matching field alone does not prove this app wrote it. A missing server
@@ -116,6 +128,13 @@ exact values/targets preserve their authorization. Changed wording, destination 
 CMS state blocks resume. Preserve the attempt and obtain operator evidence resolving
 any in-flight request before preparing another revision; never delete journal rows
 to unblock a page. A new revision cannot bypass an unresolved page request.
+
+Once the app has proof that a request succeeded, that authorization stays consumed.
+A WordPress-only restore or lost server journal cannot turn that request into a
+retryable failure. Reconciliation reports the missing journal while preserving the
+known write result. Plain heading values are treated literally, including text
+that resembles HTML entities; unsupported shortcode brackets and values that
+cannot be rolled back by this adapter are rejected during preparation.
 
 Receipts distinguish **write succeeded** from **verification passed/failed**.
 Verification checks the server request identity, fresh CMS token, exact heading,
@@ -191,7 +210,8 @@ docker compose -p lseo-publishing-test -f wordpress/compose.test.yml down -v
 
 Use your configured Python environment in place of `.venv-mvp` if needed.
 The integration suite includes real writes, server duplicate suppression, concurrent
-conflicts, byte/metadata preservation, rendered verification, inverse rollback,
+conflicts (including a two-connection navigation race while waiting for the page
+lock), literal entity-looking text, byte/metadata preservation, rendered verification, inverse rollback,
 wrong-instance/object/field rejection and minimal-account permissions. Synthetic
 app tests cover stale revisions, authority, workspace lock, timeouts, explicit
 reconciliation/resume, partial batches, verification failure and restoration.

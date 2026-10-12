@@ -541,7 +541,7 @@ class TrackingTests(TrackingFixture, unittest.TestCase):
         self.assertEqual(reopened.changes(self.sid)[0]["id"], cid)
         self.assertEqual(t.actions(reopened, self.sid), [])
         with reopened.db() as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 5)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 6)
 
 
 class TrendTests(TrackingFixture, unittest.TestCase):

@@ -96,6 +96,95 @@ class PublishingTests(TrackingFixture, unittest.TestCase):
         self.assertEqual((result["write"], result["verification"]), ("succeeded", "passed"))
         self.assertEqual([r["payload"]["outcome"] for r in t.rows(self.store, "implementation_receipts", self.sid)], ["attempted", "reported_applied"])
 
+    def configure_fixture(self, environment, url, instance):
+        p.configure_from_human_ui(self.store, self.sid, url=url, instance=instance,
+            environment=environment, username="test", password="synthetic-test-only",
+            isolation="Synthetic independent database and deployment with no production synchronization",
+            isolation_verified=True, human_clicked=True, vault=Vault())
+        self.client = FakeWordPress(p.destination(self.store, self.sid))
+        self.client.seed(3, p.mapped_url(self.client.destination, self.store.site(self.sid).url, self.record["payload"]["url"]))
+
+    def test_staging_then_production_requires_separate_review_and_can_apply(self):
+        self.configure_fixture("staging", "https://staging.example.com/", "separate-staging")
+        staging = self.ready()
+        first = self.apply(staging)[0]
+        self.configure_fixture("production", "https://example.com/", "synthetic")
+        with self.assertRaisesRegex(ValueError, "Destination changed"):
+            self.apply(staging)
+        production = self.ready()
+        second = self.apply(production)[0]
+        self.assertNotEqual(first["destination_key"], second["destination_key"])
+        self.assertEqual(p.latest_event(self.store, self.sid, second["id"])["verification"], "passed")
+        self.apply(production)
+        self.assertEqual(len(self.client.writes), 1)
+
+    def test_credential_rotation_cannot_reset_consumed_revision(self):
+        self.apply(self.ready())
+        self.configure_fixture("production", "https://example.com/", "synthetic")
+        with self.assertRaisesRegex(ValueError, "already been attempted"):
+            self.ready()
+        self.assertEqual(self.client.writes, [])
+
+    def test_uncertain_page_in_another_installation_does_not_block(self):
+        self.configure_fixture("staging", "https://staging.example.com/", "separate-staging")
+        self.client.reject = True
+        self.apply(self.ready())
+        self.configure_fixture("production", "https://example.com/", "synthetic")
+        attempt = self.apply(self.ready())[0]
+        self.assertEqual(p.latest_event(self.store, self.sid, attempt["id"])["verification"], "passed")
+
+    def test_uncertain_staging_receipt_does_not_block_another_staging_installation(self):
+        self.configure_fixture("staging", "https://staging-a.example.com/", "staging-a")
+        self.client.reject = True
+        first = self.apply(self.ready())[0]
+        self.assertEqual(p.latest_event(self.store, self.sid, first["id"])["write"], "uncertain")
+        self.configure_fixture("staging", "https://staging-b.example.com/", "staging-b")
+        second = self.apply(self.ready())[0]
+        self.assertEqual(p.latest_event(self.store, self.sid, second["id"])["verification"], "passed")
+        self.assertEqual(len(self.client.writes), 1)
+        self.assertEqual(p.latest_event(self.store, self.sid, first["id"])["write"], "uncertain")
+
+    def test_credential_rotation_allows_read_only_recovery_but_revokes_writes(self):
+        rid = self.ready()
+        self.client.timeout = True
+        attempt = self.apply(rid)[0]
+        old_client = self.client
+        self.configure_fixture("production", "https://example.com/", "synthetic")
+        active = p.active_destination(self.store, self.sid)
+        used = []
+        def factory(destination):
+            used.append(destination)
+            return old_client
+        self.assertEqual(p.reconcile(self.store, self.sid, attempt["id"], client_factory=factory), "passed")
+        self.assertEqual(used, [active])
+        self.assertEqual(len(old_client.writes), 1)
+        with self.assertRaisesRegex(ValueError, "Destination changed"):
+            p.resume(self.store, self.sid, attempt["id"], human_clicked=True, client_factory=factory)
+        self.configure_fixture("staging", "https://staging.example.com/", "separate-staging")
+        with self.assertRaisesRegex(ValueError, "Destination changed"):
+            p.reconcile(self.store, self.sid, attempt["id"], client_factory=factory)
+
+    def test_v5_attempt_migration_preserves_receipts_and_replay_protection(self):
+        from seo_agent.storage import Store, PUBLISHING_SCHEMA_V5
+        attempt = self.apply(self.ready())[0]
+        before_events = p.rows(self.store, self.sid, "cms_events")
+        with self.store.db() as db:
+            db.execute("PRAGMA foreign_keys=OFF")
+            create = next(q for q in PUBLISHING_SCHEMA_V5.split(";") if "CREATE TABLE IF NOT EXISTS cms_attempts(" in q)
+            db.execute(create.replace("cms_attempts(", "cms_attempts_old("))
+            db.execute("INSERT INTO cms_attempts_old SELECT id,site_id,review_id,action_id,revision,direction,created,payload FROM cms_attempts")
+            db.execute("DROP TABLE cms_attempts")
+            db.execute("ALTER TABLE cms_attempts_old RENAME TO cms_attempts")
+            db.execute("PRAGMA user_version=5")
+        self.store = Store(self.store.root)
+        self.assertEqual(p.record(self.store, self.sid, "cms_attempts", attempt["id"]), attempt)
+        self.assertEqual(p.rows(self.store, self.sid, "cms_events"), before_events)
+        with self.store.db() as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 6)
+            self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
+        with self.assertRaisesRegex(ValueError, "already been attempted"):
+            self.ready()
+
     def test_wrong_site_and_destination(self):
         with self.assertRaises(ValueError):
             p.prepare(self.store, self.other, self.bid, self.mapping, client_factory=self.factory)
@@ -314,6 +403,31 @@ class PublishingTests(TrackingFixture, unittest.TestCase):
         self.assertTrue(exported["history_only"])
         self.assertNotIn("credential_id", t.canonical(exported))
         self.assertTrue(p.destination(self.store, self.sid)["credential_id"])
+
+    def test_server_restore_cannot_reauthorize_a_known_success(self):
+        rid = self.ready()
+        before = copy.deepcopy(self.client.states)
+        attempt = self.apply(rid)[0]
+        # A WordPress-only restore can remove the operation journal and restore
+        # the exact original page token. Local proof of success must survive it.
+        self.client.states = before
+        self.client.operations.clear()
+        p.reconcile(self.store, self.sid, attempt["id"], client_factory=self.factory)
+        self.assertEqual(p.latest_event(self.store, self.sid, attempt["id"])["write"], "succeeded")
+        with self.assertRaises(ValueError):
+            p.resume(self.store, self.sid, attempt["id"], human_clicked=True, client_factory=self.factory)
+        self.assertEqual(len(self.client.writes), 1)
+
+    def test_shortcode_brackets_are_rejected_before_cms_authorization(self):
+        value = {**self.record["payload"], "proposed": "Our service [updated]"}
+        t.save_action(self.store, self.sid, self.aid, value, revision=3)
+        self.bid = t.freeze_batch(self.store, self.sid, [(value["action_id"], 3)])
+        t.approve_from_human_ui(self.store, self.sid, self.bid, human_clicked=True,
+            statement="I approve this exact publication batch", confirmation_source="Synthetic owner")
+        with self.assertRaises(ValueError):
+            self.ready(rollback=True)
+        self.assertFalse(p.rows(self.store, self.sid, "cms_reviews"))
+        self.assertFalse(self.client.writes)
 
 
 if __name__ == "__main__":

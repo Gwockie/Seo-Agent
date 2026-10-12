@@ -134,11 +134,11 @@ def _restore(archive, root, *, already_locked=False):
         if tables not in (original_tables, original_tables | journal_tables, original_tables | journal_tables | TRACKING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES | EVALUATION_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES | EVALUATION_TABLES | PUBLISHING_TABLES):
             raise ValueError("Unexpected backup database schema")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3, 4, 5):
+        if version not in (0, 1, 2, 3, 4, 5, 6):
             raise ValueError("Unsupported backup database version")
-        from .storage import SCHEMA, TRACKING_SCHEMA, SCHEDULING_SCHEMA, EVALUATION_SCHEMA, PUBLISHING_SCHEMA
+        from .storage import SCHEMA, TRACKING_SCHEMA, SCHEDULING_SCHEMA, EVALUATION_SCHEMA, PUBLISHING_SCHEMA, PUBLISHING_SCHEMA_V5
         with closing(sqlite3.connect(":memory:")) as expected:
-            expected.executescript(SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA + PUBLISHING_SCHEMA)
+            expected.executescript(SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA + (PUBLISHING_SCHEMA_V5 if version < 6 else PUBLISHING_SCHEMA))
             for table in tables:
                 # Table names have already been checked against a fixed allowlist.
                 for pragma in ("table_info", "foreign_key_list"):

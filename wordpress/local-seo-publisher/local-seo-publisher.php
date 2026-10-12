@@ -35,7 +35,16 @@ function lseo_permission($request) {
 function lseo_inventory() {
     global $wpdb, $wp_version;
     require_once ABSPATH . 'wp-admin/includes/plugin.php';
-    $plugins = get_option('active_plugins', array());
+    // Read authoritative options, not the request's pre-transaction alloptions cache.
+    $option_names = array('active_plugins','stylesheet','template','home','siteurl','permalink_structure',
+        'show_on_front','page_on_front','page_for_posts','blog_public','timezone_string','gmt_offset','blogname','blogdescription');
+    $options = array();
+    foreach ($option_names as $name) {
+        $raw = $wpdb->get_row($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name=%s", $name), ARRAY_A);
+        $options[$name] = $raw === null ? false : maybe_unserialize($raw['option_value']);
+        if (get_option($name) !== $options[$name]) { lseo_fail('Option changed during this request'); }
+    }
+    $plugins = $options['active_plugins'];
     sort($plugins);
     // First supported combination is deliberately small; builders/SEO plugins are detected,
     // reported by name and rejected, never treated as WordPress's post_title/content fields.
@@ -74,6 +83,7 @@ function lseo_inventory() {
     if ($shared) { lseo_fail('Potential shared content rendering requires a different adapter'); }
     return array('wordpress' => $wp_version, 'editor' => 'core blocks', 'seo_plugin' => 'none',
         'theme' => 'twentytwentyfive', 'plugins' => $plugins, 'theme_hash' => hash('sha256', wp_json_encode($files)),
+        'options_hash' => hash('sha256', wp_json_encode($options)),
         'templates_hash' => hash('sha256', wp_json_encode($templates)), 'adapter_hash' => hash_file('sha256', __FILE__));
 }
 
@@ -124,8 +134,15 @@ function lseo_write($request) {
         || !is_int($body['block_index']) || !is_string($body['current']) || !is_string($body['proposed'])
         || $body['current'] === $body['proposed'] || trim($body['proposed']) === ''
         || mb_strlen($body['proposed']) > 500 || preg_match('/[<>\r\n\[\]]/', $body['proposed'])) { lseo_fail('Unsupported write request', 400); }
-    $wpdb->query('START TRANSACTION');
+    // Repeatable-read next-key locks include insert gaps. This deliberately short,
+    // conservative transaction serializes inventory changes as well as page edits.
+    // Acquire locks BEFORE any consistent read can establish a stale snapshot.
+    if ($wpdb->query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ') === false
+        || $wpdb->query('START TRANSACTION') === false) { lseo_fail(); }
     try {
+        foreach (array($wpdb->options, $wpdb->posts) as $table) {
+            if ($wpdb->query("SELECT * FROM {$table} ORDER BY 1 FOR UPDATE") === false) { lseo_fail(); }
+        }
         $before = lseo_state($id, true); // Row lock also serializes ordinary human WP updates.
         $saved = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}lseo_operations WHERE request_id=%s FOR UPDATE", $body['request_id']), ARRAY_A);
         if ($saved) {
@@ -144,7 +161,9 @@ function lseo_write($request) {
         $html = $block['innerHTML'];
         $pattern = '/^(\s*<h([1-6])\b[^>]*\bid="' . preg_quote($body['anchor'], '/') . '"[^>]*>)([^<>]*)(<\/h\2>\s*)$/sD';
         if (!preg_match($pattern, $html, $match) || substr_count($before['content'], $html) !== 1) { lseo_fail(); }
-        $replacement = $match[1] . esc_html($body['proposed']) . $match[4];
+        // Proposed values are literal plain text, including entity-looking text.
+        // esc_html() preserves existing entities and would silently decode them.
+        $replacement = $match[1] . htmlspecialchars($body['proposed'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8', true) . $match[4];
         // Preserve every byte outside this heading. No block reserialization, wp_update_post
         // hooks, autosaves, post revisions, metadata writes, or generic field updates.
         $after_content = str_replace($html, $replacement, $before['content']);

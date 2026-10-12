@@ -9,11 +9,12 @@ import re
 
 from . import tracking as t
 from .coordination import run_lock, workspace_lock
-from .storage import new_id, utc_now, checked_id, PUBLISHING_TABLES
+from .storage import new_id, utc_now, checked_id, PUBLISHING_TABLES, cms_destination_key
 from .wordpress import WordPress, CMSVault, CMSFailure, destination_url, inspect_state, rendered, bind_public_target, masked_content
 
 STATEMENT = "I approve these exact CMS writes"
-SCOPE = ("Replace only the identified page-local core/heading text in post_content; "
+SCOPE = ("Briefly lock CMS posts/options inventory and the page metadata for conflict checks. "
+         "Replace only the identified page-local core/heading text in post_content; "
          "update post_modified and post_modified_gmt; retain a server journal with before/after content; "
          "invalidate this page's WordPress cache. No editor, autosave, draft, status change, "
          "post-title, SEO-title, template, plugin, option or metadata write. "
@@ -117,6 +118,9 @@ def prepare(store, sid, bid, mappings, *, client_factory=WordPress):
         if set(mappings) != {v["action_id"] for v in b["payload"]["actions"]}:
             raise ValueError("Map every frozen action exactly once")
         prepared, pages = [], set()
+        key = cms_destination_key(d)
+        attempts = rows(store, sid, "cms_attempts")
+        known = {r["id"]: r["destination_key"] for r in attempts}
         with closing(client_factory(d)) as client:
             for f in b["payload"]["actions"]:
                 value, mapping = f["action"], mappings[f["action_id"]]
@@ -126,9 +130,11 @@ def prepare(store, sid, bid, mappings, *, client_factory=WordPress):
                 if type(page) is not int or page < 1 or page in pages or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,79}", anchor):
                     raise ValueError("Use one action per page and a unique explicit heading anchor")
                 pages.add(page)
-                if any(x["action_id"] == f["action_id"] and x["revision"] == f["revision"] for x in rows(store, sid, "cms_attempts")):
+                if any(x["action_id"] == f["action_id"] and x["revision"] == f["revision"] and x["destination_key"] == key for x in attempts):
                     raise ValueError("This revision has already been attempted; reconcile it, never reuse its authorization")
-                if any(x["action_id"] == f["action_id"] and x["revision"] == f["revision"] for x in t.rows(store, "implementation_receipts", sid)):
+                if any(x["action_id"] == f["action_id"] and x["revision"] == f["revision"] and (known.get(x["payload"]["attempt_id"]) == key if x["payload"]["attempt_id"] in known
+                        else x["payload"]["environment"] == d["environment"])
+                       for x in t.rows(store, "implementation_receipts", sid)):
                     raise ValueError("Historical implementation receipts cannot authorize another publication")
                 url = mapped_url(d, store.site(sid).url, value["url"])
                 state = client.state(page)
@@ -138,8 +144,9 @@ def prepare(store, sid, bid, mappings, *, client_factory=WordPress):
                 matches = [v for v in state["headings"] if v["anchor"] == anchor and v["text"] == value["current"]]
                 if len(matches) != 1:
                     raise ValueError("CMS heading/current value is ambiguous or differs from the frozen action")
-                if any(c in value["proposed"] for c in "<>\r\n") or len(value["proposed"]) > 500:
-                    raise ValueError("Only single-line plain heading text up to 500 characters is supported")
+                for heading_value in (value["current"], value["proposed"]):
+                    if not heading_value.strip() or any(c in heading_value for c in "<>[]\r\n") or len(heading_value) > 500:
+                        raise ValueError("Both forward and rollback values must be single-line plain heading text up to 500 characters, without markup or shortcode brackets")
                 source = client.public(url)
                 bind_public_target(source["html"], f.get("target"), anchor)
                 baseline = rendered(source, anchor, value["current"])
@@ -198,6 +205,13 @@ def event(store, sid, attempt, **payload):
 def latest_event(store, sid, attempt):
     found = [r for r in rows(store, sid, "cms_events") if r["attempt_id"] == attempt]
     return found[-1]["payload"] if found else {"write": "uncertain", "verification": "not_run"}
+
+
+def proven_result(store, sid, attempt):
+    """Success is an immutable historical fact, even if the server later restores."""
+    found = [r["payload"]["result"] for r in rows(store, sid, "cms_events")
+             if r["attempt_id"] == attempt and r["payload"].get("write") == "succeeded" and r["payload"].get("result")]
+    return found[-1] if found else None
 
 
 def export_review(store, sid, rid):
@@ -280,7 +294,8 @@ def execute(store, sid, rid, *, human_clicked, direction="apply", client_factory
         with closing(client_factory(p["destination"])) as client:
             # Preflight the whole unattempted batch before any write; each action is checked again below.
             work = []
-            attempts = rows(store, sid, "cms_attempts")
+            key = cms_destination_key(p["destination"])
+            attempts = [r for r in rows(store, sid, "cms_attempts") if r["destination_key"] == key]
             for a in p["actions"]:
                 existing = next((r for r in attempts if r["action_id"] == a["action_id"] and r["revision"] == a["revision"] and r["direction"] == direction), None)
                 if existing:
@@ -306,7 +321,7 @@ def execute(store, sid, rid, *, human_clicked, direction="apply", client_factory
             for a, token in work:
                 # Block a new revision on a page with any unresolved prior application request.
                 for other in rows(store, sid, "cms_attempts"):
-                    if other["payload"].get("object_id") == a["object_id"] and latest_event(store, sid, other["id"]).get("write") == "uncertain":
+                    if other["destination_key"] == key and other["payload"].get("object_id") == a["object_id"] and latest_event(store, sid, other["id"]).get("write") == "uncertain":
                         raise ValueError("An earlier request on this page has an uncertain outcome")
                 identity = new_id()
                 body = {"request_id": identity, "instance": p["destination"]["instance"], "url": a["url"], "token": token,
@@ -315,7 +330,7 @@ def execute(store, sid, rid, *, human_clicked, direction="apply", client_factory
                         "proposed": a["proposed"] if direction == "apply" else a["current"]}
                 payload = {"object_id": a["object_id"], "request": body, "authorization_id": auth["id"]}
                 with store.db() as db:
-                    db.execute("INSERT INTO cms_attempts VALUES (?,?,?,?,?,?,?,?)", (identity, sid, rid, a["action_id"], a["revision"], direction, utc_now(), t.canonical(payload)))
+                    db.execute("INSERT INTO cms_attempts VALUES (?,?,?,?,?,?,?,?,?)", (identity, sid, rid, a["action_id"], a["revision"], direction, utc_now(), t.canonical(payload), key))
                 attempt = record(store, sid, "cms_attempts", identity)
                 sent = False
                 try:
@@ -354,13 +369,20 @@ def reconcile(store, sid, attempt_id, *, client_factory=WordPress):
         if attempt["payload"].get("history_only"):
             raise ValueError("Restored attempts are history; use separately configured read-only CMS inspection")
         p = record(store, sid, "cms_reviews", attempt["review_id"])["payload"]
-        if active_destination(store, sid) != p["destination"]:
+        active = active_destination(store, sid)
+        if cms_destination_key(active) != attempt["destination_key"]:
             raise ValueError("Destination changed; do not reconcile against another installation")
         a = next(v for v in p["actions"] if v["action_id"] == attempt["action_id"])
-        with closing(client_factory(p["destination"])) as client:
+        # Credential rotation revokes writes, but cannot strand read-only recovery.
+        with closing(client_factory(active)) as client:
             result = client.operation(a["object_id"], attempt_id)
             if result.get("status") == "applied":
                 return verify(store, sid, client, p, a, attempt, result)
+            proven = proven_result(store, sid, attempt_id)
+            if proven:
+                event(store, sid, attempt_id, write="succeeded", verification="failed", result=proven,
+                      reason="Previously committed write is proven locally, but its server journal is now missing. Authorization remains consumed; investigate the server restore or journal loss.")
+                return "failed"
             event(store, sid, attempt_id, write="uncertain", verification="not_run",
                   reason="No committed server receipt. Absence is not proof of failure; do not resend or start another revision on this page.")
             return "uncertain"
@@ -392,6 +414,8 @@ def resume(store, sid, attempt_id, *, human_clicked, client_factory=WordPress):
                 return verify(store, sid, client, p, a, attempt, result)
             if result.get("status") != "unknown":
                 raise ValueError("Unknown server receipt format; do not retry")
+            if proven_result(store, sid, attempt_id):
+                raise ValueError("This request already succeeded; server journal loss cannot authorize publishing it again")
             if attempt["direction"] == "apply":
                 check_action(store, sid, p, a)
                 existing = [r for r in t.rows(store, "implementation_receipts", sid) if r["payload"]["attempt_id"] == attempt_id]
