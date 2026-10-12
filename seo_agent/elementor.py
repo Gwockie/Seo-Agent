@@ -193,15 +193,26 @@ def bind_rendered_heading(source, mapping):
     if len(documents) != 1 or documents[0].get("data-elementor-type") != "wp-page":
         _reject()
     document = documents[0]
+    # A shared document can be nested beneath (or around) a page document without
+    # adding a data-id. Containment and widget ancestry alone cannot prove locality.
+    def document_boundary(node):
+        return node.has_attr("data-elementor-id") or node.has_attr("data-elementor-type")
+
+    if any(document_boundary(parent) for parent in document.parents):
+        _reject()
     # Identity must be unique across the whole response, including shared templates.
     widgets = soup.find_all(attrs={"data-id": mapping.element_id})
     if len(widgets) != 1 or document not in widgets[0].parents:
         _reject()
     widget = widgets[0]
+    if document_boundary(widget) or any(document_boundary(child) for child in widget.find_all(True)):
+        _reject()
     ancestors = []
     for parent in widget.parents:
         if parent is document:
             break
+        if document_boundary(parent):
+            _reject()
         if parent.get("data-id"):
             identity = parent["data-id"]
             if len(soup.find_all(attrs={"data-id": identity})) != 1:

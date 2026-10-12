@@ -26,8 +26,10 @@ old semantic value (the original token's escape spelling may differ).
 
 `bind_rendered_heading` cross-checks the independently supplied CMS page id, unique
 widget and ancestor ids, heading type/level and literal text against the public
-page document. Public selectors never supply a CMS identity. Shared documents,
-duplicate identities/JSON keys, dynamic/global/template references, rich/linked
+page document. Public selectors never supply a CMS identity. Nested document
+boundaries cannot claim page-local headings; unrelated sibling header/footer
+documents are permitted as surrounding evidence, without certifying their effects.
+Duplicate identities/JSON keys, dynamic/global/template references, rich/linked
 headings, malformed/bounded-out data and stale documents are rejected.
 
 Example using synthetic or protected read-only evidence:

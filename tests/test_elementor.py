@@ -96,6 +96,30 @@ class ElementorPreparationTests(unittest.TestCase):
             with self.assertRaises(CMSFailure):
                 bind_rendered_heading(source, self.mapping)
 
+    def test_nested_document_boundaries_cannot_claim_page_local_heading(self):
+        widget = '<div data-id="heading1" data-widget_type="heading.default">'
+        heading = '<h1>Synthetic &amp;amp; heading</h1>'
+        for boundary in ('data-elementor-type="section" data-elementor-id="9002"',
+                         'data-elementor-id="9002"', 'data-elementor-type="section"'):
+            with self.subTest(boundary=boundary):
+                around_widget = self.html.replace(widget, '<div ' + boundary + '>' + widget)
+                around_widget = around_widget.replace(heading, heading + '</div>')
+                within_widget = self.html.replace(heading, '<div ' + boundary + '>' + heading + '</div>')
+                on_widget = self.html.replace(widget, widget[:-1] + ' ' + boundary + '>')
+                on_heading = self.html.replace('<h1>', '<h1 ' + boundary + '>')
+                around_page = '<div ' + boundary + '>' + self.html + '</div>'
+                for source in (around_widget, within_widget, on_widget, on_heading, around_page):
+                    with self.assertRaises(CMSFailure):
+                        bind_rendered_heading(source, self.mapping)
+
+    def test_unrelated_sibling_shared_documents_do_not_block_page_binding(self):
+        header = ('<div data-elementor-id="9002" data-elementor-type="wp-post">'
+                  '<div data-id="header1"><h2>Synthetic shared header</h2></div></div>')
+        footer = '<div data-elementor-id="9003" data-elementor-type="footer"></div>'
+        result = bind_rendered_heading(header + self.html + footer, self.mapping)
+        self.assertEqual(result["page_id"], 9001)
+        self.assertFalse(result["publishing_compatible"])
+
     def test_whitespace_and_escaped_title_token_do_not_reserialize_siblings(self):
         raw = self.raw.replace('Synthetic &amp; heading', r'Synthetic \u0026amp; heading')
         mapping = map_heading(raw, page_id=9001, element_id="heading1")
