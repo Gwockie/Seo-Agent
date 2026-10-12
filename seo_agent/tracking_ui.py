@@ -76,7 +76,9 @@ def settings_ui(store, sid):
 
 def proposals(store, sid, aid):
     st.subheader("Exact publication review")
-    st.caption("Import proposals or use saved page copies. Review values, facts, validation and rollback, then freeze the exact batch. Publishing requires a separate authorized WordPress implementation step; this app cannot publish.")
+    st.caption("Review values, facts, validation and rollback, then freeze the exact batch. Configured WordPress destinations also require a concrete CMS mapping, exact human CMS approval and an explicit Apply instruction.")
+    from . import publication_ui
+    publication_ui.setup(store, sid)
     upload = st.file_uploader("Proposal handoff (JSON or Markdown)", type=["json", "md", "txt"], key=sid + ":handoff:" + aid)
     if st.button("Import proposal handoff", key=sid + ":handoff_import:" + aid, disabled=upload is None):
         try:
@@ -151,7 +153,7 @@ def proposals(store, sid, aid):
                             st.rerun()
                         except ValueError:
                             st.error("Approval not recorded. Explicit human authorization and a current unchanged batch are required.")
-            st.info("Next: a separately authorized agent/human applies only these actions in WordPress, records implementation receipts and verifies public values. Publishing remains unavailable here.")
+            publication_ui.batch(store, sid, b["id"])
 
 
 def charts(store, sid, *, demo=False):

@@ -37,7 +37,9 @@ files. Do not open the primary workspace from a development checkout.
    recommendation reviewed, importing a confirmation assertion, or entering an
    approval reference elsewhere does not authorize publication.
 6. A separately authorized human/agent implements only those exact actions in
-   WordPress. This app has no CMS writer, deployment integration or AI provider.
+   WordPress. The optional [WordPress publisher](wordpress-publishing.md) now handles
+   its narrow supported CMS combination through a separate human CMS review and
+   explicit Apply. Unsupported CMS writes and deployment remain unavailable.
    Record an attempt immediately **before** the website action, then its outcome
    through the receipt interface below. A receipt itself cannot execute work or
    grant approval. The execution workflow must also satisfy the website policy.

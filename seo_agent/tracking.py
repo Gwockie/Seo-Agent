@@ -441,11 +441,19 @@ def record_receipt(store, sid, raw):
         if r["outcome"] == "attempted":
             if prior or r["corrects"]:
                 raise ValueError("Attempt already exists")
-            attempts = {v["attempt_id"]: v for v in all_receipts if v["environment"] == r["environment"]}
+            # CMS attempts have a stable installation scope. Legacy/manual receipts
+            # lack that evidence and retain their conservative environment-wide gate.
+            cms_scopes = {v["id"]: v["destination_key"] for v in db.execute(
+                "SELECT id,destination_key FROM cms_attempts WHERE site_id=? AND action_id=? AND revision=?",
+                (sid, r["action_id"], r["revision"]))}
+            scoped_receipts = [v for v in all_receipts if r["attempt_id"] not in cms_scopes
+                               or v["attempt_id"] not in cms_scopes
+                               or cms_scopes[v["attempt_id"]] == cms_scopes[r["attempt_id"]]]
+            attempts = {v["attempt_id"]: v for v in scoped_receipts if v["environment"] == r["environment"]}
             if any(v["outcome"] == "attempted" for v in attempts.values()):
                 raise ValueError("Close the previous attempt with an outcome before starting another")
             if r["environment"] == "production":
-                if any(v["outcome"] == "reported_applied" and v["approval_id"] == r["approval_id"] for v in all_receipts):
+                if any(v["outcome"] == "reported_applied" and v["approval_id"] == r["approval_id"] for v in scoped_receipts):
                     raise ValueError("Applied publication cannot be attempted again under the same approval")
                 approval = db.execute("SELECT * FROM human_approvals WHERE id=? AND site_id=?", (r["approval_id"], sid)).fetchone()
                 if not approval or json.loads(approval["payload"]).get("history_only") or r["occurred_utc"] < approval["created"]:

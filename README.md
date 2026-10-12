@@ -10,7 +10,8 @@ approval. See [revision and assessment workflow](docs/recommendation-revisions.m
 including the synthetic UI demonstration and current model-review limitations.
 
 Website changes require explicit human approval of exact actions under
-[AGENTS.md](AGENTS.md). The app has no CMS write integration. Search Console uses
+[AGENTS.md](AGENTS.md). The opt-in [WordPress publisher](docs/wordpress-publishing.md)
+requires its own exact CMS review, human approval and Apply instruction. Search Console uses
 only `https://www.googleapis.com/auth/webmasters.readonly`.
 
 ## Launch
@@ -103,7 +104,9 @@ fallback when access is blocked and a refresh control in Setup. Prepared local
 page copies provide before/after review with highlighted differences. See
 [reviewing together](docs/review-in-app.md). Agents may iterate on verified isolated
 staging; publishing or affecting production requires exact approval under the
-[website-change policy](docs/website-change-policy.md). This app has no CMS writer.
+[website-change policy](docs/website-change-policy.md). The optional
+[WordPress publisher](docs/wordpress-publishing.md) supports only explicitly mapped,
+human-approved core heading changes and starts disabled.
 
 CTR is calculated from total clicks/impressions; aggregate position is impression
 weighted within the same dataset. Property totals are separate from query/page
@@ -156,3 +159,12 @@ uses one GET-only helper for pages, robots and sitemaps, with public IPv4/IPv6/D
 and connection peer checks, explicit redirects, TLS verification, no ambient proxy
 or credentials, and bounded request/time/size budgets. Sitemap XML rejects DTDs,
 entities and external references. Imported text is data, never executable guidance.
+
+## Exact WordPress publication
+
+An opt-in [WordPress heading publishing workflow](docs/wordpress-publishing.md)
+supports explicitly mapped core heading text, human-approved CMS review, durable
+attempts, independent write/verification receipts and conflict-checked rollback.
+Publishing defaults to disabled. Production plugin installation and every exact
+publication require separate human authorization; audits and scheduling remain
+read-only. See the guide for supported editors and local Docker validation.
