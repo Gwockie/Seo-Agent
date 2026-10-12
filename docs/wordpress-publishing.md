@@ -5,6 +5,11 @@ CMS credential. This implementation does not configure or write any real site.
 Audits, scheduled reviews, imports, model output and historical receipts cannot
 grant publication authority. Search Console remains `webmasters.readonly`.
 
+For an existing Elementor site, see [Elementor compatibility work](elementor-publishing.md).
+Offline widget mapping and exact local JSON previews are implemented; a certified
+Elementor server writer still requires actual CMS/host evidence and separate review.
+The version 1 production restrictions below remain enforced.
+
 ## Supported scope
 
 The first adapter supports **one plain-text `core/heading` block per published
