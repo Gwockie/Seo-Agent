@@ -90,6 +90,10 @@ Legacy token migration copies and validates, never deletes or rewrites the origi
   to general. Saved URL/property identities cannot be changed to a different site.
 - **Target phrases:** exact targets, related intent terms, priority and intended
   pages; bounded, explicitly site-associated CSV import/export.
+- **Hosting & CMS:** site/environment discovery access stored in Windows Credential
+  Manager, bounded read-only REST discovery, protected administrator imports,
+  versioned compatibility and staging evidence. See [CMS discovery](docs/cms-discovery.md).
+  Discovery never enables publishing; Elementor preparation stays offline.
 - **Overview & audits:** bounded manual collection, progress, source failures,
   history, property metrics, daily trends, query groups, landing pages, inspection,
   equal complete comparison windows and safely formatted report viewing/export.

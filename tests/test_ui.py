@@ -58,7 +58,7 @@ class UITests(unittest.TestCase):
         self.assertNotIn("clinical_review", rendered)
         self.assertNotIn("ADHD", rendered)
         self.assertNotIn("Paoli", rendered)
-        for view in ("Target phrases", "Recommendations & changes", "Setup"):
+        for view in ("Target phrases", "Recommendations & changes", "Hosting & CMS", "Setup"):
             app.sidebar.radio[0].set_value(view).run()
             self.assertFalse(app.exception)
         app.sidebar.selectbox[0].select(None).run()

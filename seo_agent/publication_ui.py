@@ -4,6 +4,8 @@ from . import publishing as p
 
 
 def setup(store, sid):
+    from .discovery_ui import summary
+    summary(store, sid)
     with st.expander("WordPress publication destination (disabled until configured)"):
         d = p.destination(store, sid)
         st.caption("Supported: page-local plain core heading text, WordPress core blocks, Twenty Twenty-Five, no SEO/builder/cache plugins. A separately installed companion endpoint is required. See docs/wordpress-publishing.md.")

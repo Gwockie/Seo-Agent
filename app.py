@@ -650,7 +650,7 @@ def main():
         st.session_state["view"] = st.session_state.pop("pending_view")
     if "view" not in st.session_state:
         st.session_state["view"] = "Recommendations & changes" if sid and store.audits(sid) else "Setup"
-    view = st.sidebar.radio("View", ["Setup", "Target phrases", "Overview & audits", "Recommendations & changes", "Changes & results"], key="view")
+    view = st.sidebar.radio("View", ["Setup", "Hosting & CMS", "Target phrases", "Overview & audits", "Recommendations & changes", "Changes & results"], key="view")
     if not sid:
         setup(store, None, None)
         return
@@ -664,6 +664,9 @@ def main():
     st.text(labels[sid])
     if view == "Setup":
         setup(store, sid, config)
+    elif view == "Hosting & CMS":
+        from seo_agent.discovery_ui import render
+        render(store, sid, demo=DEMO)
     elif view == "Target phrases":
         phrases(store, sid, config)
     elif view == "Overview & audits":

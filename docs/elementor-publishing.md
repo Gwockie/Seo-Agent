@@ -13,6 +13,12 @@ make the current core-block adapter accept it.
 
 ## Implemented local preparation
 
+The app's [Hosting & CMS workflow](cms-discovery.md) now saves site/environment
+connections, read-only REST evidence and protected administrator assertions. Its
+offline preparation UI cross-checks imported page/widget metadata against separately
+collected REST identities and rendering, retaining provenance and freshness. It
+does not certify Elementor publication or enable a writer.
+
 `seo_agent.elementor` provides offline mapping of one explicit static heading in a
 raw Elementor metadata array. It accepts nested container/section/column elements,
 requires a unique widget identity and explicit heading level, records ancestor ids
@@ -42,8 +48,9 @@ bind_rendered_heading(captured_public_html, mapping)
 local_candidate = preview_heading(raw_metadata, mapping, "Synthetic revised heading")
 ```
 
-These functions contain no network access, CMS writes, credential handling, database
-changes or approval handlers. They are not wired into the publication executor.
+These mapping functions contain no network access, CMS writes, credential handling,
+database changes or approval handlers. The discovery workflow saves their inert
+results separately; they are not wired into the publication executor.
 Successful mapping reports `publishing_compatible=False`: it cannot establish
 site/plugin/host compatibility or grant publication permission. The core adapter's
 server rejection remains intact. No Elementor production writer is enabled yet.
