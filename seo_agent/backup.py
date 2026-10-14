@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from .protection import require_protected
-from .storage import Store, child_path, checked_id, config_hash, private_location, TRACKING_TABLES, SCHEDULING_TABLES, EVALUATION_TABLES, PUBLISHING_TABLES
+from .storage import Store, child_path, checked_id, config_hash, private_location, TRACKING_TABLES, SCHEDULING_TABLES, EVALUATION_TABLES, PUBLISHING_TABLES, DISCOVERY_TABLES
 from .config import SiteConfig
 from .import_export import backup_evidence_path
 from .appearance import appearance_path, load_appearance
@@ -36,10 +36,14 @@ def _backup(store, destination):
         dbpath = Path(tmp) / "metadata.sqlite"
         with store.db() as source, closing(sqlite3.connect(dbpath)) as target:
             source.backup(target)
+            target.execute("PRAGMA secure_delete=ON")
             # Disable at backup creation as well as restore: even an interrupted
             # extraction must never leave reusable CMS authority on disk.
             with target:
                 tables = {r[0] for r in target.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if DISCOVERY_TABLES <= tables:
+                    from .discovery import sanitize_backup
+                    sanitize_backup(target)
                 destinations = target.execute("SELECT site_id,payload FROM cms_destinations").fetchall() if "cms_destinations" in tables else []
                 for sid, raw in destinations:
                     payload = {**json.loads(raw), "enabled": False, "credential_id": None}
@@ -48,8 +52,21 @@ def _backup(store, destination):
                     if table not in tables:
                         continue
                     for identity, raw in target.execute(f"SELECT id,payload FROM {table}").fetchall():
-                        target.execute(f"UPDATE {table} SET payload=? WHERE id=?", (json.dumps({**json.loads(raw), "history_only": True}), identity))
+                        def detach(value):
+                            if isinstance(value, dict):
+                                return {k: None if k == "credential_id" else detach(v) for k, v in value.items()}
+                            if isinstance(value, list):
+                                return [detach(v) for v in value]
+                            return value
+                        target.execute(f"UPDATE {table} SET payload=? WHERE id=?", (json.dumps({**detach(json.loads(raw)), "history_only": True}), identity))
+                for sid, raw in target.execute("SELECT id,config FROM sites").fetchall():
+                    config = SiteConfig.model_validate_json(raw)
+                    config.connection_id = None
+                    target.execute("UPDATE sites SET config=?,config_hash=?,connection_id=NULL WHERE id=?", (config.model_dump_json(), config_hash(config), sid))
+            target.execute("VACUUM")  # Do not archive freed pages containing detached access references.
         total = dbpath.stat().st_size
+        if total > MAX_BACKUP_BYTES:
+            raise ValueError("Backup size limit exceeded")
         with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED) as z:
             z.writestr("backup.json", json.dumps({"schema": 1, "credentials": "excluded; reconnect Google on restore"}))
             z.write(dbpath, "metadata.sqlite")
@@ -131,14 +148,14 @@ def _restore(archive, root, *, already_locked=False):
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         original_tables = {"connections", "sites", "target_phrases", "audits", "recommendations", "change_events"}
         journal_tables = {"change_plans", "result_reviews"}
-        if tables not in (original_tables, original_tables | journal_tables, original_tables | journal_tables | TRACKING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES | EVALUATION_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES | EVALUATION_TABLES | PUBLISHING_TABLES):
+        if tables not in (original_tables, original_tables | journal_tables, original_tables | journal_tables | TRACKING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES | EVALUATION_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES | EVALUATION_TABLES | PUBLISHING_TABLES, original_tables | journal_tables | TRACKING_TABLES | SCHEDULING_TABLES | EVALUATION_TABLES | PUBLISHING_TABLES | DISCOVERY_TABLES):
             raise ValueError("Unexpected backup database schema")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3, 4, 5, 6):
+        if version not in (0, 1, 2, 3, 4, 5, 6, 7):
             raise ValueError("Unsupported backup database version")
-        from .storage import SCHEMA, TRACKING_SCHEMA, SCHEDULING_SCHEMA, EVALUATION_SCHEMA, PUBLISHING_SCHEMA, PUBLISHING_SCHEMA_V5
+        from .storage import SCHEMA, TRACKING_SCHEMA, SCHEDULING_SCHEMA, EVALUATION_SCHEMA, PUBLISHING_SCHEMA, PUBLISHING_SCHEMA_V5, DISCOVERY_SCHEMA
         with closing(sqlite3.connect(":memory:")) as expected:
-            expected.executescript(SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA + (PUBLISHING_SCHEMA_V5 if version < 6 else PUBLISHING_SCHEMA))
+            expected.executescript(SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA + (PUBLISHING_SCHEMA_V5 if version < 6 else PUBLISHING_SCHEMA) + DISCOVERY_SCHEMA)
             for table in tables:
                 # Table names have already been checked against a fixed allowlist.
                 for pragma in ("table_info", "foreign_key_list"):
@@ -175,4 +192,6 @@ def _restore(archive, root, *, already_locked=False):
     validate_restored(store)
     from .publishing import disable_restored
     disable_restored(store)
+    from .discovery import validate_restored as validate_discovery
+    validate_discovery(store)
     return store

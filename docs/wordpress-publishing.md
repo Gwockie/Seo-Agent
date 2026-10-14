@@ -2,6 +2,10 @@
 
 Publishing is off until a human configures the selected destination and a separate
 CMS credential. This implementation does not configure or write any real site.
+
+Use [Hosting & CMS discovery](cms-discovery.md) to save independent read access and
+inventory first. Its advisory compatibility summary appears in publication setup,
+but discovery credentials/evidence cannot enable this destination or grant approval.
 Audits, scheduled reviews, imports, model output and historical receipts cannot
 grant publication authority. Search Console remains `webmasters.readonly`.
 

@@ -180,7 +180,7 @@ class PublishingTests(TrackingFixture, unittest.TestCase):
         self.assertEqual(p.record(self.store, self.sid, "cms_attempts", attempt["id"]), attempt)
         self.assertEqual(p.rows(self.store, self.sid, "cms_events"), before_events)
         with self.store.db() as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 6)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 7)
             self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
         with self.assertRaisesRegex(ValueError, "already been attempted"):
             self.ready()

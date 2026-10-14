@@ -174,6 +174,19 @@ PUBLISHING_SCHEMA = PUBLISHING_SCHEMA_V5.replace(
     "payload TEXT NOT NULL, destination_key TEXT NOT NULL, UNIQUE(site_id,action_id,revision,direction,destination_key)"
 ).replace("user_version=5", "user_version=6")
 
+DISCOVERY_TABLES = {"discovery_connections", "discovery_evidence", "discovery_attempts"}
+DISCOVERY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS discovery_connections(id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id),
+ payload TEXT NOT NULL, UNIQUE(id,site_id));
+CREATE TABLE IF NOT EXISTS discovery_evidence(id TEXT PRIMARY KEY, site_id TEXT NOT NULL, connection_id TEXT NOT NULL,
+ version INTEGER NOT NULL, kind TEXT NOT NULL, created TEXT NOT NULL, payload TEXT NOT NULL,
+ UNIQUE(connection_id,version), FOREIGN KEY(connection_id,site_id) REFERENCES discovery_connections(id,site_id));
+CREATE TABLE IF NOT EXISTS discovery_attempts(id TEXT PRIMARY KEY, site_id TEXT NOT NULL, connection_id TEXT NOT NULL,
+ kind TEXT NOT NULL, started TEXT NOT NULL, finished TEXT, status TEXT NOT NULL, scope TEXT NOT NULL,
+ FOREIGN KEY(connection_id,site_id) REFERENCES discovery_connections(id,site_id));
+PRAGMA user_version=7;
+"""
+
 
 def migrate_publication_attempts(db):
     """Rebuild v5 uniqueness without changing attempt IDs or their event references."""
@@ -220,15 +233,15 @@ class Store:
         current = False
         if self.db_path.exists():
             with closing(sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True)) as check:
-                current = check.execute("PRAGMA user_version").fetchone()[0] == 6
+                current = check.execute("PRAGMA user_version").fetchone()[0] == 7
         if not current:
             with nullcontext() if already_locked else run_lock(workspace_lock(self.root)):
                 with self.db() as db:
                     version = db.execute("PRAGMA user_version").fetchone()[0]
-                    if version not in (0, 1, 2, 3, 4, 5, 6):
+                    if version not in (0, 1, 2, 3, 4, 5, 6, 7):
                         raise ValueError("Unsupported workspace schema version")
                     migrate_publication_attempts(db)
-                    db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA + PUBLISHING_SCHEMA + "\nCOMMIT;")
+                    db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA + PUBLISHING_SCHEMA + DISCOVERY_SCHEMA + "\nCOMMIT;")
 
     def require_private_write(self):
         if self.enforce_protection:
