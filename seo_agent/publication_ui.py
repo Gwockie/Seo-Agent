@@ -55,6 +55,9 @@ def batch(store, sid, bid):
         return
     st.markdown("**Application-controlled WordPress publication**")
     frozen = p.t.batch(store, sid, bid)
+    if d.get("adapter") == "elementor-heading/1" and len(frozen["payload"]["actions"]) != 1:
+        st.warning("This Elementor contract requires exactly one action per batch. Freeze and review one page at a time; each change refreshes the installation dependency token.")
+        return
     with st.form(sid + ":cms_map:" + bid):
         mappings = {}
         for f in frozen["payload"]["actions"]:

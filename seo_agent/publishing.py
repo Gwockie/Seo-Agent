@@ -124,6 +124,8 @@ def prepare(store, sid, bid, mappings, *, client_factory=WordPress):
     with run_lock(workspace_lock(store.root)):
         d = active_destination(store, sid)
         b, a = approval(store, sid, bid)
+        if d.get("adapter") == ep.ADAPTER and len(b["payload"]["actions"]) != 1:
+            raise ValueError("This Elementor contract requires exactly one action per batch; freeze and review one page at a time")
         if t.batch_validity(store, sid, bid):
             raise ValueError("Frozen proposal approval is stale; refresh and review again")
         if set(mappings) != {v["action_id"] for v in b["payload"]["actions"]}:
@@ -193,6 +195,8 @@ def validate_review(store, sid, review):
         raise ValueError("Restored or altered CMS review is not reusable permission")
     if active_destination(store, sid) != p["destination"]:
         raise ValueError("Destination changed since review")
+    if p["destination"].get("adapter") == ep.ADAPTER and len(p["actions"]) != 1:
+        raise ValueError("This Elementor contract requires exactly one action per batch")
     b, a = approval(store, sid, p["batch_id"])
     if a["id"] != p["approval_id"] or b["payload"]["fingerprint"] != p["batch_fingerprint"]:
         raise ValueError("Proposal approval changed")

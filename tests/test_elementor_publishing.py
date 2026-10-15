@@ -198,6 +198,32 @@ class ElementorPublishingTests(TrackingFixture, unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "successful verified staging"):
             setup.staging_proof(self.store, self.sid, {"environment": "production"}, frozen, self.client.state(3))
 
+    def test_two_page_batch_is_rejected_before_review_or_attempt(self):
+        self.value["url"] = "https://example.com/second/"
+        self.aid = self.store.create_audit(self.sid)
+        original_actions = t.actions
+        def scoped_actions(store, sid, **kwargs):
+            return [r for r in original_actions(store, sid, **kwargs) if r["audit_id"] == self.aid]
+        def second_fixture(sid, aid, url):
+            bundle = fixture(sid, aid, url)
+            bundle["appearance"]["url"] = self.store.site(sid).url
+            return bundle
+        with patch("tests.test_review_previews.fixture", side_effect=second_fixture), patch.object(t, "actions", side_effect=scoped_actions):
+            second, _ = test_tracking.TrackingTests.preview_target(self)
+        bid = t.freeze_batch(self.store, self.sid, [(self.record["action_id"],2), (second["action_id"],2)])
+        t.approve_from_human_ui(self.store, self.sid, bid, human_clicked=True,
+            statement="I approve this exact publication batch", confirmation_source="Synthetic owner")
+        mapping = {**self.mapping, second["action_id"]:dict(object_id=4, metadata_row_id=43, element_id="heading1")}
+        with patch.object(self.client, "state", wraps=self.client.state) as state, self.assertRaisesRegex(ValueError, "exactly one action"):
+            p.prepare(self.store, self.sid, bid, mapping, client_factory=self.factory)
+        state.assert_not_called()
+        self.assertFalse(p.rows(self.store, self.sid, "cms_reviews"))
+        self.assertFalse(p.rows(self.store, self.sid, "cms_attempts"))
+        app = AppTest.from_function(publication_app, args=(str(self.store.root), self.sid, bid), default_timeout=30).run()
+        self.assertFalse(app.exception)
+        self.assertTrue(any("exactly one action" in item.value for item in app.warning))
+        self.assertFalse(app.number_input)
+
     def test_verification_failure_is_separate_from_write_success(self):
         rid = self.ready()
         original = self.client.write

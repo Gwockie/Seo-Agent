@@ -2,7 +2,9 @@
 
 The separate `elementor-heading/1` adapter connects the existing proposal/revision,
 freeze, human approval, CMS review, Apply, verification and recovery workflow to
-one page-local static heading. The core block adapter retains its restrictions.
+one page-local static heading, with exactly one action per review batch. Freeze and
+review each page separately: a write changes the other pages' dependency tokens.
+The core block adapter retains its restrictions.
 Neither code approval nor a discovery import grants website publication authority.
 
 ## Certified scope
@@ -54,7 +56,7 @@ own source review, effect contract and representative real integration tests.
    independent endpoint state and public identity, creates the exact JSON/mirror
    candidate locally, and saves the row/path, old/new text, provenance, inventory,
    effects and inverse rollback. No generic content replacement is offered.
-5. Review the exact packet, record the separate CMS human authorization, and select
+5. Review the exact one-action packet, record the separate CMS human authorization, and select
    **Apply these approved CMS actions**. Rollback needs its explicit authorization.
    The app repeats fresh raw/rendered checks before each request. Revisions, replaced
    evidence, disconnected environments, changed facts/configuration or stale captures
