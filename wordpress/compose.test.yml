@@ -22,6 +22,7 @@ services:
         define('LSEO_ENVIRONMENT', 'local');
         define('LSEO_USER_ID', 2);
         define('LSEO_PAGE_IDS', array(3, 4));
+        define('LSEO_ELEMENTOR_CONTRACT', 'elementor-3.31.3-canvas-heading/1');
         define('DISABLE_WP_CRON', true);
     volumes:
       - ./local-seo-publisher:/var/www/html/wp-content/plugins/local-seo-publisher:ro

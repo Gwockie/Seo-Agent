@@ -11,6 +11,7 @@ from . import tracking as t
 from .coordination import run_lock, workspace_lock
 from .storage import new_id, utc_now, checked_id, PUBLISHING_TABLES, cms_destination_key
 from .wordpress import WordPress, CMSVault, CMSFailure, destination_url, inspect_state, rendered, bind_public_target, masked_content
+from . import elementor_publishing as ep
 
 STATEMENT = "I approve these exact CMS writes"
 SCOPE = ("Briefly lock CMS posts/options inventory and the page metadata for conflict checks. "
@@ -44,7 +45,8 @@ def destination(store, sid):
 
 
 def configure_from_human_ui(store, sid, *, url, instance, environment, username, password,
-                            isolation, human_clicked, isolation_verified=False, vault=None):
+                            isolation, human_clicked, isolation_verified=False, vault=None,
+                            adapter="core-heading/1", discovery_id=None):
     store.require_private_write()
     if human_clicked is not True or not instance.strip() or len(instance) > 100:
         raise ValueError("Human destination configuration and instance identifier required")
@@ -53,12 +55,18 @@ def configure_from_human_ui(store, sid, *, url, instance, environment, username,
         raise ValueError("Production destination must exactly match the selected site's canonical URL")
     if environment in {"staging", "local"} and (isolation_verified is not True or len(isolation.strip()) < 30 or url == store.site(sid).url):
         raise ValueError("Separate staging destination and explicit isolation evidence required")
+    if adapter not in {"core-heading/1", ep.ADAPTER}:
+        raise ValueError("Unsupported publishing adapter")
     with run_lock(workspace_lock(store.root)):
+        from .publisher_setup import evidence_binding
+        binding = evidence_binding(store, sid, url=url, instance=instance, environment=environment,
+                                   adapter=adapter, discovery_id=discovery_id)
         key = new_id()  # Never reuse a restored or previously configured credential reference.
         (vault or CMSVault()).write(key, username, password)
         payload = {"url": url, "instance": instance, "environment": environment, "isolation": isolation,
                    "credential_id": key, "generation": new_id(), "enabled": True,
-                   "site_url": store.site(sid).url, "configured": utc_now(), "isolation_verified_by_human": isolation_verified}
+                   "site_url": store.site(sid).url, "configured": utc_now(), "isolation_verified_by_human": isolation_verified,
+                   "adapter": adapter, "discovery_binding": binding}
         with store.db() as db:
             db.execute("INSERT INTO cms_destinations VALUES (?,?) ON CONFLICT(site_id) DO UPDATE SET payload=excluded.payload",
                        (sid, t.canonical(payload)))
@@ -84,10 +92,13 @@ def disable_restored(store):
                 db.execute(f"UPDATE {table} SET payload=? WHERE id=?", (t.canonical({**json.loads(row[1]), "history_only": True}), row[0]))
 
 
-def active_destination(store, sid):
+def active_destination(store, sid, *, recovery=False):
     d = destination(store, sid)
     if not d or not d.get("enabled") or not d.get("credential_id") or d.get("site_url") != store.site(sid).url:
         raise ValueError("Publishing disabled; a human must configure this exact destination and credentials")
+    if not recovery:
+        from .publisher_setup import validate_binding
+        validate_binding(store, sid, d)
     return d
 
 
@@ -113,6 +124,8 @@ def prepare(store, sid, bid, mappings, *, client_factory=WordPress):
     with run_lock(workspace_lock(store.root)):
         d = active_destination(store, sid)
         b, a = approval(store, sid, bid)
+        if d.get("adapter") == ep.ADAPTER and len(b["payload"]["actions"]) != 1:
+            raise ValueError("This Elementor contract requires exactly one action per batch; freeze and review one page at a time")
         if t.batch_validity(store, sid, bid):
             raise ValueError("Frozen proposal approval is stale; refresh and review again")
         if set(mappings) != {v["action_id"] for v in b["payload"]["actions"]}:
@@ -124,9 +137,11 @@ def prepare(store, sid, bid, mappings, *, client_factory=WordPress):
         with closing(client_factory(d)) as client:
             for f in b["payload"]["actions"]:
                 value, mapping = f["action"], mappings[f["action_id"]]
-                if set(mapping) != {"object_id", "anchor"} or value["action_kind"] != "text":
-                    raise ValueError("Only explicitly mapped core heading text is supported; titles/settings are separate fields")
-                page, anchor = mapping["object_id"], mapping["anchor"]
+                is_elementor = d.get("adapter") == ep.ADAPTER
+                expected_keys = {"object_id", "element_id", "metadata_row_id"} if is_elementor else {"object_id", "anchor"}
+                if set(mapping) != expected_keys or value["action_kind"] != "text":
+                    raise ValueError("Only explicitly mapped static heading text is supported; titles/settings are separate fields")
+                page, anchor = mapping["object_id"], mapping.get("anchor", "elementor")
                 if type(page) is not int or page < 1 or page in pages or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,79}", anchor):
                     raise ValueError("Use one action per page and a unique explicit heading anchor")
                 pages.add(page)
@@ -141,26 +156,32 @@ def prepare(store, sid, bid, mappings, *, client_factory=WordPress):
                 inspect_state(d, state, url)
                 if state.get("id") != page:
                     raise ValueError("CMS object identity mismatch")
-                matches = [v for v in state["headings"] if v["anchor"] == anchor and v["text"] == value["current"]]
-                if len(matches) != 1:
-                    raise ValueError("CMS heading/current value is ambiguous or differs from the frozen action")
                 for heading_value in (value["current"], value["proposed"]):
                     if not heading_value.strip() or any(c in heading_value for c in "<>[]\r\n") or len(heading_value) > 500:
                         raise ValueError("Both forward and rollback values must be single-line plain heading text up to 500 characters, without markup or shortcode brackets")
                 source = client.public(url)
-                bind_public_target(source["html"], f.get("target"), anchor)
-                baseline = rendered(source, anchor, value["current"])
-                masked_content(state["content"], anchor, value["current"])
+                if is_elementor:
+                    extra = ep.prepare(state, source, f, mapping)
+                    from .publisher_setup import validate_installation, staging_proof
+                    validate_installation(store, sid, d, state)
+                    extra["staging_validation"] = staging_proof(store, sid, d, f, state)
+                else:
+                    matches = [v for v in state["headings"] if v["anchor"] == anchor and v["text"] == value["current"]]
+                    if len(matches) != 1:
+                        raise ValueError("CMS heading/current value is ambiguous or differs from the frozen action")
+                    bind_public_target(source["html"], f.get("target"), anchor)
+                    masked_content(state["content"], anchor, value["current"])
+                    extra = {"field": "post_content:core/heading", "anchor": anchor, "block_index": matches[0]["block_index"],
+                             "rendered_baseline": rendered(source, anchor, value["current"]),
+                             "validation": "Exact CMS page/anchor/value and rendered heading matched; adjacent content and directives captured"}
                 if client.state(page)["token"] != state["token"]:
                     raise ValueError("CMS changed while collecting the public baseline; prepare a fresh review")
                 prepared.append({"action_id": f["action_id"], "revision": f["revision"], "url": url,
-                    "source_url": value["url"], "object_id": page, "field": "post_content:core/heading", "anchor": anchor,
-                    "block_index": matches[0]["block_index"], "current": value["current"], "proposed": value["proposed"],
-                    "before": state, "rendered_baseline": baseline, "confirmations": value["confirmations"],
-                    "validation": "Exact CMS page/anchor/value and rendered heading matched; adjacent content and directives captured",
+                    "source_url": value["url"], "object_id": page, "current": value["current"], "proposed": value["proposed"],
+                    "before": state, "confirmations": value["confirmations"], **extra,
                     "rollback": {"current": value["proposed"], "proposed": value["current"], "requires": "Fresh whole-page token from the successful write; stop if any subsequent edit"}})
         payload = {"batch_id": bid, "approval_id": a["id"], "batch_fingerprint": b["payload"]["fingerprint"],
-                   "destination": d, "actions": prepared, "write_scope": SCOPE, "reviewed_utc": utc_now()}
+                   "destination": d, "actions": prepared, "write_scope": ep.SCOPE if d.get("adapter") == ep.ADAPTER else SCOPE, "reviewed_utc": utc_now()}
         rid = new_id()
         payload["fingerprint"] = t.digest(payload)
         with store.db() as db:
@@ -174,9 +195,15 @@ def validate_review(store, sid, review):
         raise ValueError("Restored or altered CMS review is not reusable permission")
     if active_destination(store, sid) != p["destination"]:
         raise ValueError("Destination changed since review")
+    if p["destination"].get("adapter") == ep.ADAPTER and len(p["actions"]) != 1:
+        raise ValueError("This Elementor contract requires exactly one action per batch")
     b, a = approval(store, sid, p["batch_id"])
     if a["id"] != p["approval_id"] or b["payload"]["fingerprint"] != p["batch_fingerprint"]:
         raise ValueError("Proposal approval changed")
+    from .publisher_setup import validate_staging_proof
+    for action in p["actions"]:
+        if action.get("adapter") == ep.ADAPTER:
+            validate_staging_proof(store, sid, p["destination"], action)
     return p
 
 
@@ -259,10 +286,15 @@ def verify(store, sid, client, p, a, attempt, result):
         inspect_state(p["destination"], state, a["url"])
         if state["token"] != result["after_token"] or state["preserved"] != a["before"]["preserved"]:
             raise ValueError("CMS content/metadata changed outside the requested field")
-        if masked_content(state["content"], a["anchor"], expected) != masked_content(a["before"]["content"], a["anchor"], a["current"]):
-            raise ValueError("Unrelated raw CMS content changed")
-        matches = [h for h in state["headings"] if h["anchor"] == a["anchor"] and h["block_index"] == a["block_index"] and h["text"] == expected]
-        if len(matches) != 1 or rendered(client.public(a["url"]), a["anchor"], expected) != a["rendered_baseline"]:
+        if a.get("adapter") == ep.ADAPTER:
+            ep.verify_raw(state, a, direction)
+        else:
+            if masked_content(state["content"], a["anchor"], expected) != masked_content(a["before"]["content"], a["anchor"], a["current"]):
+                raise ValueError("Unrelated raw CMS content changed")
+            matches = [h for h in state["headings"] if h["anchor"] == a["anchor"] and h["block_index"] == a["block_index"] and h["text"] == expected]
+            if len(matches) != 1:
+                raise ValueError("CMS heading identity changed")
+        if render_action(client.public(a["url"]), a, expected) != a["rendered_baseline"]:
             raise ValueError("Rendered field, adjacent content or technical directives changed")
         status = "passed"
     except (ValueError, KeyError):
@@ -278,6 +310,12 @@ def verify(store, sid, client, p, a, attempt, result):
         if any(r["outcome"] == "reported_applied" for r in history) and not any(r["outcome"] == "rolled_back" for r in history):
             receipt(store, sid, p, a, original["id"], "rolled_back", expected, "Explicitly authorized CMS rollback; public verification " + status)
     return status
+
+
+def render_action(source, action, expected):
+    if action.get("adapter") == ep.ADAPTER:
+        return ep.render(source, ep.action_mapping(action), expected)
+    return rendered(source, action["anchor"], expected)
 
 
 def execute(store, sid, rid, *, human_clicked, direction="apply", client_factory=WordPress):
@@ -325,7 +363,8 @@ def execute(store, sid, rid, *, human_clicked, direction="apply", client_factory
                         raise ValueError("An earlier request on this page has an uncertain outcome")
                 identity = new_id()
                 body = {"request_id": identity, "instance": p["destination"]["instance"], "url": a["url"], "token": token,
-                        "anchor": a["anchor"], "block_index": a["block_index"],
+                        **(dict(environment=p["destination"]["environment"], **ep.request_fields(a, direction)) if a.get("adapter") == ep.ADAPTER
+                           else {"anchor": a["anchor"], "block_index": a["block_index"]}),
                         "current": a["current"] if direction == "apply" else a["proposed"],
                         "proposed": a["proposed"] if direction == "apply" else a["current"]}
                 payload = {"object_id": a["object_id"], "request": body, "authorization_id": auth["id"]}
@@ -347,7 +386,7 @@ def execute(store, sid, rid, *, human_clicked, direction="apply", client_factory
                         inspect_state(p["destination"], state, a["url"])
                         if state["token"] != token:
                             raise ValueError("CMS conflict")
-                        if rendered(client.public(a["url"]), a["anchor"], body["current"]) != a["rendered_baseline"]:
+                        if render_action(client.public(a["url"]), a, body["current"]) != a["rendered_baseline"]:
                             raise ValueError("Public content or directives changed since review")
                         sent = True
                         result = client.write(a["object_id"], body)
@@ -369,12 +408,12 @@ def reconcile(store, sid, attempt_id, *, client_factory=WordPress):
         if attempt["payload"].get("history_only"):
             raise ValueError("Restored attempts are history; use separately configured read-only CMS inspection")
         p = record(store, sid, "cms_reviews", attempt["review_id"])["payload"]
-        active = active_destination(store, sid)
+        active = active_destination(store, sid, recovery=True)
         if cms_destination_key(active) != attempt["destination_key"]:
             raise ValueError("Destination changed; do not reconcile against another installation")
         a = next(v for v in p["actions"] if v["action_id"] == attempt["action_id"])
         # Credential rotation revokes writes, but cannot strand read-only recovery.
-        with closing(client_factory(active)) as client:
+        with closing(client_factory({**active, "adapter": p["destination"].get("adapter", "core-heading/1")})) as client:
             result = client.operation(a["object_id"], attempt_id)
             if result.get("status") == "applied":
                 return verify(store, sid, client, p, a, attempt, result)
@@ -428,7 +467,7 @@ def resume(store, sid, attempt_id, *, human_clicked, client_factory=WordPress):
                     check_action(store, sid, p, a)
                 state = client.state(a["object_id"])
                 inspect_state(p["destination"], state, a["url"])
-                if state["token"] != body["token"] or rendered(client.public(a["url"]), a["anchor"], body["current"]) != a["rendered_baseline"]:
+                if state["token"] != body["token"] or render_action(client.public(a["url"]), a, body["current"]) != a["rendered_baseline"]:
                     raise ValueError("CMS/public conflict; this uncertain request cannot be resent")
                 try:
                     result = client.write(a["object_id"], body)

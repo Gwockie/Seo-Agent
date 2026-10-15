@@ -28,6 +28,9 @@ def render(store, sid, *, demo=False):
     st.caption("Save discovery access once per site and environment. Discovery cannot enable publishing or create approval. Credentials stay in Windows Credential Manager.")
     st.info("Application passwords inherit the account's permissions. This reader only uses fixed GET routes. Authentication can update host access logs and application-password last-used/IP bookkeeping; it does not invoke editor/save, autosave, setup or cache-flush routines.")
     found = d.connections(store, sid)
+    from .publisher_setup import readiness
+    ready = readiness(store, sid)
+    st.info("Readiness: " + ready["level"] + ". " + ready["next_action"])
     labels = {None: "Add a discovery environment", **{c["id"]: c["label"] + " · " + c["environment"] for c in found}}
     prefix = sid + ":discovery:"
     if prefix + "pending" in st.session_state:
@@ -104,6 +107,24 @@ def render(store, sid, *, demo=False):
                 except (ValueError, OSError):
                     _error()
     report = d.compatibility(store, sid, cid)
+    from .publisher_setup import HOST_CONDITIONS, review_host, setup_packet
+    with st.expander("Pinned publisher host effects and separate setup packet"):
+        st.caption("Administrator imports remain assertions. Independently inspect provider/CMS records before confirming these exact conditions. This review cannot authorize setup or publication.")
+        admin = d.latest(store, sid, cid, "administrator_export")
+        if admin:
+            st.json(admin["payload"]["body"]["data"]["host"])
+        st.json(setup_packet(store, sid, cid))
+        with st.form(formkey + "publisher_host"):
+            checks = [st.checkbox(condition, key=formkey + "host_condition:" + str(i)) for i, condition in enumerate(HOST_CONDITIONS)]
+            source = st.text_input("Independent provider/CMS review source", max_chars=300, key=formkey + "host_source")
+            confirmed = st.checkbox("I am the human who independently checked these host records", key=formkey + "host_human")
+            if st.form_submit_button("Record exact host effects review", disabled=demo or not c["enabled"]):
+                try:
+                    review_host(store, sid, cid, human_clicked=confirmed, source=source,
+                                conditions=[condition for condition, checked in zip(HOST_CONDITIONS, checks) if checked])
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
     st.markdown("**Compatibility and evidence**")
     for blocker in report["blockers"]:
         st.warning(blocker)

@@ -9,10 +9,10 @@ but discovery credentials/evidence cannot enable this destination or grant appro
 Audits, scheduled reviews, imports, model output and historical receipts cannot
 grant publication authority. Search Console remains `webmasters.readonly`.
 
-For an existing Elementor site, see [Elementor compatibility work](elementor-publishing.md).
-Offline widget mapping and exact local JSON previews are implemented; a certified
-Elementor server writer still requires actual CMS/host evidence and separate review.
-The version 1 production restrictions below remain enforced.
+For Elementor, see the separate [Elementor heading adapter](elementor-publishing.md).
+It has its own pinned server/client/UI contract, evidence checks and real synthetic
+integration suite. The core adapter restrictions below remain enforced. Neither
+adapter implies compatibility with Meadow & Mind's current production stack.
 
 ## Supported scope
 
@@ -60,8 +60,10 @@ production CMS compatibility is claimed without separate discovery.
    selected profile's canonical site URL. Staging/local destinations must be
    separate; record host evidence for independent editor, database, uploads,
    deployment destination, no production sync/jobs/customer messages, restricted
-   access and noindex. A staging-looking URL is not evidence. If these facts cannot
-   be established, use the local fixture. Path translation preserves the source
+   access and noindex. Select the corresponding current Hosting & CMS connection
+   with independently reviewed isolation evidence. A checkbox or loopback address
+   is insufficient: loopback can tunnel to production. If these facts cannot
+   be established, keep candidates local. Path translation preserves the source
    URL's suffix under the selected staging home.
 3. Enumerate each page ID and core heading anchor. **Read CMS and prepare exact
    publication review** only reads the CMS/public site and stores a local packet.

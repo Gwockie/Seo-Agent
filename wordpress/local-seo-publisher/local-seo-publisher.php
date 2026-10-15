@@ -2,9 +2,11 @@
 /**
  * Plugin Name: Local SEO Exact Heading Publisher
  * Description: Opt-in, conditional page-local heading writes with a durable request journal.
- * Version: 0.1.0
+ * Version: 0.2.0
  */
 if (!defined('ABSPATH')) { exit; }
+
+require_once __DIR__ . '/elementor-publisher.php';
 
 function lseo_fail($message = 'Unsupported configuration or conflicting CMS values', $status = 409) {
     throw new RuntimeException($message, $status);

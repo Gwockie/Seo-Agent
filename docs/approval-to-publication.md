@@ -7,6 +7,11 @@ approval. An opt-in [WordPress heading publisher](wordpress-publishing.md) now a
 CMS mapping review, separate exact CMS human authorization, explicit Apply,
 per-action receipts, reconciliation and authorized rollback. It remains disabled
 until a human configures the destination and separate protected CMS credentials.
+The separate [Elementor heading adapter](elementor-publishing.md) uses these same
+authoritative proposals, frozen revisions, approvals and receipts. It requires
+current hosting evidence and a successful isolated staging Apply of the exact
+action revision before preparing its production CMS review. This is separate from
+the core adapter; public widget mapping does not establish compatibility.
 
 1. **Review the selected site and audit.** In **Recommendations & changes → Review
    together**, read Summary and Recommendations, then Proposed edits and the
