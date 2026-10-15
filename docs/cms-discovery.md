@@ -159,14 +159,32 @@ and byte-preserving candidate JSON as a local version. Replaced source evidence
 invalidates the mapping. HTML cross-checks do not prove a database metadata row ID;
 that part remains administrator asserted.
 
-Every result has `publishing_compatible: false`. The currently documented version 1
-core-heading stack still requires its own companion, destination configuration,
-fresh CMS/public checks and exact proposal plus CMS approvals. Elementor mapping
-is not a certified writer. The subsequent milestone is the separately validated
-Elementor server/client/UI writer with pinned save/render/cache effects, journals,
-conflict checks, preservation and inverse rollback contracts. See
+Discovery results retain `publishing_compatible: false`. Separate publication
+readiness distinguishes mapping, local validation, successful staging validation
+and a current production review. The [Elementor adapter](elementor-publishing.md)
+requires fresh independent endpoint checks against the exact local certificate,
+current public/administrator evidence and an independent human host-effects review.
+Imports or successful mapping alone never enable writing. See
 [Elementor compatibility](elementor-publishing.md) and
 [publication safeguards](wordpress-publishing.md).
+
+The **Publisher host effects** panel requires all eight inventory categories and
+concrete sourced observations for cache, mirrors, rendering, save lifecycle,
+experiments, deployment and absence of production synchronization/jobs/messages.
+The human must independently inspect provider/CMS records and record the source
+of that review. Replacing either public or administrator evidence invalidates it.
+The adapter cross-checks page/metadata identity, template, raw mirror/excerpt,
+active plugin and exact runtime version/file-hash assertions with its own endpoint.
+Use canonical plugin paths as inventory names; WordPress's hash is the sorted
+`wp-includes` PHP tree, the theme/Elementor hashes cover their complete trees, and
+the companion hash concatenates `elementor-publisher.php` then
+`local-seo-publisher.php`. The manifest and endpoint verify the other core hashes.
+No raw configuration, private options or passwords belong in the export.
+
+The downloadable companion setup packet lists the deterministic package hash,
+each file hash, destination, effects, validation and recovery. It is inert. Unknown
+provider/installation values are explicit blockers; installing it on production
+still needs separate exact approval. Discovery never installs it automatically.
 
 ## Storage, migrations and recovery
 

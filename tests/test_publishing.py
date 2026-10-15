@@ -97,10 +97,12 @@ class PublishingTests(TrackingFixture, unittest.TestCase):
         self.assertEqual([r["payload"]["outcome"] for r in t.rows(self.store, "implementation_receipts", self.sid)], ["attempted", "reported_applied"])
 
     def configure_fixture(self, environment, url, instance):
+        from tests.publication_fixtures import staging_connection
+        cid = staging_connection(self.store, self.sid, url, instance) if environment == "staging" else None
         p.configure_from_human_ui(self.store, self.sid, url=url, instance=instance,
             environment=environment, username="test", password="synthetic-test-only",
             isolation="Synthetic independent database and deployment with no production synchronization",
-            isolation_verified=True, human_clicked=True, vault=Vault())
+            isolation_verified=True, human_clicked=True, vault=Vault(), discovery_id=cid)
         self.client = FakeWordPress(p.destination(self.store, self.sid))
         self.client.seed(3, p.mapped_url(self.client.destination, self.store.site(self.sid).url, self.record["payload"]["url"]))
 

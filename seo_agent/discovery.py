@@ -14,7 +14,7 @@ from .discovery_models import (Connection, AdministratorExport, MAX_BYTES, ISOLA
                                canonical, parse, reject, safe_data, timestamp)
 from .discovery_client import DiscoveryVault, DiscoveryReader, page_url
 
-KINDS = {"public", "authenticated", "administrator_export", "mapping", "isolation_review"}
+KINDS = {"public", "authenticated", "administrator_export", "mapping", "isolation_review", "publisher_host_review"}
 MAX_AGE = timedelta(hours=24)
 
 
@@ -130,7 +130,7 @@ def status(store, sid, cid, row):
         return "invalidated"
     if datetime.now(timezone.utc) - timestamp(body["observed_utc"]) > MAX_AGE:
         return "stale"
-    if row["kind"] in {"mapping", "isolation_review"}:
+    if row["kind"] in {"mapping", "isolation_review", "publisher_host_review"}:
         if row["kind"] == "isolation_review":
             production = [{k: p[k] for k in ("id", "generation", "installation_id")}
                           for p in connections(store, sid) if p["environment"] == "production" and p["enabled"]]
@@ -138,6 +138,8 @@ def status(store, sid, cid, row):
                 return "invalidated"
         deps = ({"public": body["data"]["public_evidence_id"], "administrator_export": body["data"]["administrator_evidence_id"]}
                 if row["kind"] == "mapping" else {"administrator_export": body["data"]["evidence_id"]})
+        if row["kind"] == "publisher_host_review":
+            deps["public"] = body["data"]["public_evidence_id"]
         for kind, eid in deps.items():
             parent = latest(store, sid, cid, kind)
             if not parent or parent["id"] != eid:
@@ -369,7 +371,7 @@ def compatibility(store, sid, cid):
                                     or s["kind"] in {"mu_plugin", "dropin"}):
             blockers.append(f"Recorded active {s['kind']} {s['name']} is outside the version 1 core-heading contract (see source certainty).")
     if has_elementor:
-        blockers.append("Elementor publishing is unsupported. Offline field mapping is preparation only; a separately validated writer is required.")
+        blockers.append("Elementor mapping alone cannot enable publication. The separate pinned canvas-heading adapter requires matching fresh runtime and independently reviewed host/staging evidence; other stacks remain unsupported.")
     if not public:
         blockers.append("Refresh current public REST identities before cross-checking any imported page mapping.")
     return {"schema_version": 1, "scope": scope(store, sid, c), "evaluated_utc": utc_now(),
@@ -379,7 +381,8 @@ def compatibility(store, sid, cid):
             "blockers": blockers, "staging": isolation,
             "supported_combinations": [{"adapter": "core-heading/1", "validated_fixture": "WordPress 7.1.3 / PHP 8.3 / MariaDB 11.4 / Twenty Twenty-Five",
                 "requirements": "Only the publisher companion active; no MU/drop-ins/multisite/custom/shared templates; flat core blocks, unique explicit heading anchor and explicit excerpt. Fresh server checks and host validation required.",
-                "installation_status": "not_certified_by_discovery"}, {"adapter": "Elementor", "installation_status": "writer_not_implemented"}],
+                "installation_status": "not_certified_by_discovery"}, {"adapter": "elementor-heading/1", "installation_status": "requires_separate_certified_endpoint_and_host_review",
+                "requirements": "Pinned Elementor 3.31.3 canvas/static heading fixture only. No shared/dynamic widgets, custom settings, SEO/cache plugins or unverified host effects. See docs/elementor-publishing.md."}],
             "next_steps": ["Refresh selected page IDs; import sanitized administrator evidence for missing facts.",
                            "Independently review host isolation evidence; unknown isolation keeps work local.",
                            "Use separate exact publication review and approvals only for a supported certified adapter."],

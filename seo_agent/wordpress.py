@@ -60,6 +60,10 @@ class WordPress:
     def __init__(self, destination, vault=None):
         self.destination = destination
         self.base = destination_url(destination["url"], destination["environment"])
+        adapter = destination.get("adapter", "core-heading/1")
+        if adapter not in {"core-heading/1", "elementor-heading/1"}:
+            raise CMSFailure("Unsupported publishing adapter")
+        self.route = "local-seo-elementor/v1" if adapter == "elementor-heading/1" else "local-seo/v1"
         self.auth = (vault or CMSVault()).read(destination["credential_id"])
         self.session = requests.Session()
         self.session.trust_env = False
@@ -102,14 +106,14 @@ class WordPress:
     def state(self, object_id):
         if type(object_id) is not int or object_id < 1:
             raise CMSFailure("Explicit positive WordPress page ID required")
-        return self.request("GET", f"?rest_route=/local-seo/v1/pages/{object_id}")
+        return self.request("GET", f"?rest_route=/{self.route}/pages/{object_id}")
 
     def operation(self, object_id, request_id):
         checked_id(request_id)
-        return self.request("GET", f"?rest_route=/local-seo/v1/pages/{object_id}/operations/{request_id}")
+        return self.request("GET", f"?rest_route=/{self.route}/pages/{object_id}/operations/{request_id}")
 
     def write(self, object_id, body):
-        return self.request("POST", f"?rest_route=/local-seo/v1/pages/{object_id}", body)
+        return self.request("POST", f"?rest_route=/{self.route}/pages/{object_id}", body)
 
     def public(self, url):
         if not url.startswith(self.base):
@@ -118,6 +122,9 @@ class WordPress:
 
 
 def inspect_state(destination, state, url):
+    if destination.get("adapter") == "elementor-heading/1":
+        from .elementor_publishing import inspect_state as inspect_elementor
+        return inspect_elementor(destination, state, url)
     if not isinstance(state, dict):
         raise CMSFailure("Invalid CMS state")
     if (state.get("protocol") != PROTOCOL or state.get("instance") != destination["instance"]
