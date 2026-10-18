@@ -15,7 +15,8 @@ from seo_agent.backup import _backup, _restore
 from seo_agent.config import SiteConfig, SCOPE
 from seo_agent.coordination import run_lock, workspace_lock, BusyError
 from seo_agent.discovery_client import DiscoveryReader, DiscoveryVault, SERVICE
-from seo_agent.discovery_models import ISOLATION, parse
+from seo_agent.discovery_models import ISOLATION, parse, safe_data
+from seo_agent.wordpress import CMSFailure
 from seo_agent.storage import Store, config_hash
 
 
@@ -154,6 +155,52 @@ class DiscoveryTests(unittest.TestCase):
         path.write_bytes(b"x" * (d.MAX_BYTES + 1))
         with self.assertRaises(ValueError):
             d.import_evidence(self.store, self.sid, self.cid, path)
+
+    def test_empty_builtin_dynamic_tags_import_as_evidence_but_cannot_map(self):
+        d.refresh(self.store, self.sid, self.cid, [9001], client_factory=FakeReader)
+        value = self.bundle()
+        data = json.loads(RAW)
+        settings = data[0]["elements"][0]["settings"]
+        settings.update(title="", __dynamic__={
+            "title": '[elementor-tag id="a0123bc" name="post-title" settings="%7B%7D"]',
+            "link": '[elementor-tag id="b0123cd" name="post-url" settings="%7b%7d"]',
+        })
+        raw = json.dumps(data, indent=2)
+        value["pages"][0]["metadata"][0]["value"] = raw
+        self.import_bundle(value)
+        saved = d.latest(self.store, self.sid, self.cid, "administrator_export")
+        self.assertEqual(saved["payload"]["body"]["data"]["pages"][0]["metadata"][0]["value"], raw)
+        self.assertFalse(d.compatibility(self.store, self.sid, self.cid)["publishing_compatible"])
+        with self.assertRaises(CMSFailure):
+            d.prepare_mapping(self.store, self.sid, self.cid, 9001, "heading1", "After")
+        self.assertIsNone(d.latest(self.store, self.sid, self.cid, "mapping"))
+        self.assertIsNone(publishing.destination(self.store, self.sid))
+        for table in ("cms_authorizations", "cms_reviews", "cms_attempts"):
+            self.assertEqual(publishing.rows(self.store, self.sid, table), [])
+
+    def test_dynamic_tag_exception_is_exact_and_does_not_hide_secrets(self):
+        tag = '[elementor-tag id="a0123bc" name="post-title" settings="%7B%7D"]'
+        rejected = [tag.replace('post-title', 'post-custom-field'),
+                    tag.replace('%7B%7D', '%7B%22api_key%22%3A%22SENTINEL%22%7D'),
+                    tag.replace('%7B%7D', '%257B%257D'), tag + ' trailing',
+                    tag.replace('a0123bc', 'a' * 32),
+                    tag.replace(' settings=', ' token="SENTINEL" settings='),
+                    tag.replace(' settings=', ' name="post-url" settings='),
+                    tag.replace('%7B%7D', '{}'), '[elementor-tag',
+                    '{"api_key":"SENTINEL"}', '[{"password":"SENTINEL"}]']
+        for text in rejected:
+            with self.subTest(text=text), self.assertRaises(ValueError) as error:
+                safe_data({"__dynamic__": {"title": text}})
+            self.assertNotIn("SENTINEL", str(error.exception))
+        for value in (tag, {"title": tag}, {"__dynamic__": {"nested": {"title": tag}}},
+                      {"__dynamic__": {"api_key": tag}}, {"__dynamic__": {"title": tag, "secret": "SENTINEL"}}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                safe_data(value)
+        nested = {"__dynamic__": {"title": tag}}
+        for _ in range(35):
+            nested = {"child": nested}
+        with self.assertRaises(ValueError):
+            safe_data(nested)
 
     def test_protected_path_gate_and_history_not_importable(self):
         self.seed()

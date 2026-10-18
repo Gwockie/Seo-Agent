@@ -13,6 +13,13 @@ ISOLATION = ("database", "files_uploads", "editor_settings", "deployment", "inst
              "access_identity", "no_sync", "no_jobs_webhooks", "no_customer_messages", "restricted_access", "noindex")
 HOST_EFFECTS = ("cache", "mirrors", "rendering", "save_lifecycle", "experiments")
 
+# Inert forms observed in Elementor page exports. Only empty-settings built-ins
+# are accepted here; this does not evaluate tags or permit mapping dynamic titles.
+_EMPTY_DYNAMIC_TAG = re.compile(
+    r'\[elementor-tag id="[a-f0-9]{7}" name="(?:post-title|post-url)" '
+    r'settings="%7[Bb]%7[Dd]"\]'
+)
+
 
 def reject():
     raise ValueError("Discovery evidence rejected: check the documented bounded schema, scope and non-secret fields") from None
@@ -38,7 +45,7 @@ def parse(raw):
         reject()
 
 
-def safe_data(value, depth=0):
+def safe_data(value, depth=0, *, _dynamic_bindings=False):
     """Reject credential-bearing keys/URLs, embedded JSON and common secret formats.
 
     Free prose must still be sanitized by its administrator. Never accept arbitrary
@@ -50,7 +57,12 @@ def safe_data(value, depth=0):
         for k, v in value.items():
             if re.search(r"password|passwd|secret|token|authorization|cookie|api.?key|private.?key|submission", k, re.I):
                 reject()
-            safe_data(v, depth + 1)
+            if _dynamic_bindings and isinstance(v, str) and _EMPTY_DYNAMIC_TAG.fullmatch(v):
+                # The exact grammar contains no configurable payload. Still apply
+                # the recursion limit; the original string is preserved as evidence.
+                safe_data("", depth + 1)
+            else:
+                safe_data(v, depth + 1, _dynamic_bindings=(k == "__dynamic__" and isinstance(v, dict)))
     elif isinstance(value, list):
         if len(value) > 2000:
             reject()
