@@ -115,6 +115,14 @@ keys `_elementor_data`, `_elementor_page_settings`, `_elementor_edit_mode`,
 IDs must come from administrator evidence; they cannot be inferred from HTML.
 Nested credential-bearing settings are rejected even inside JSON strings.
 
+Within an Elementor `__dynamic__` binding dictionary, discovery also accepts the
+exact `post-title` and `post-url` tag forms with a seven-character lowercase hex ID
+and empty URL-encoded settings (`%7B%7D`, case-insensitive hex digits). It preserves
+these strings as inert evidence. Unknown tags, nonempty/double-encoded settings,
+extra attributes and malformed bracket strings remain rejected. This exception
+does not evaluate tags or enable publishing: the static-heading mapper continues
+to reject dynamic targets. Metadata row IDs still require independent evidence.
+
 Host effect areas are `cache`, `mirrors`, `rendering`, `save_lifecycle`, `experiments`.
 Use `result: observed` with the concrete observation and source reference; unknown
 facts remain `unknown`. Do not alter production plugins, templates or cache settings
