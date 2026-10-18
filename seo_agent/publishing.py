@@ -164,7 +164,7 @@ def prepare(store, sid, bid, mappings, *, client_factory=WordPress):
                     extra = ep.prepare(state, source, f, mapping)
                     from .publisher_setup import validate_installation, staging_proof
                     validate_installation(store, sid, d, state)
-                    extra["staging_validation"] = staging_proof(store, sid, d, f, state)
+                    extra["staging_validation"] = staging_proof(store, sid, d, f, state, mapping=extra["mapping"])
                 else:
                     matches = [v for v in state["headings"] if v["anchor"] == anchor and v["text"] == value["current"]]
                     if len(matches) != 1:

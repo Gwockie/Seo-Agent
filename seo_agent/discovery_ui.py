@@ -163,6 +163,40 @@ def render(store, sid, *, demo=False):
                     st.success("Saved local candidate with exact metadata row, widget path and provenance. Publishing remains unsupported.")
                 except ValueError:
                     _error()
+    with st.expander("Prepare an exact saved Elementor action"):
+        from . import elementor_candidates as candidates, tracking
+        st.caption("Choose an existing action and its latest revision. This creates an offline candidate or a precise blocked result; it grants no setup, staging or production authority. The strict publishing adapters remain unchanged.")
+        actions = tracking.actions(store, sid)
+        choices = {a["action_id"]: a for a in actions}
+        if choices:
+            with st.form(formkey + "action_candidate"):
+                selected = st.selectbox("Saved action revision", list(choices),
+                    format_func=lambda key: f"{choices[key]['audit_id']} · {key} · revision {choices[key]['revision']} · {choices[key]['payload']['current']}",
+                    key=formkey + "candidate_action")
+                action = choices[selected]
+                st.text("Proposed: " + action["payload"]["proposed"])
+                pid = st.number_input("Candidate CMS page ID", min_value=1, step=1, key=formkey + "candidate_page")
+                widget = st.text_input("Candidate heading widget ID", key=formkey + "candidate_widget")
+                if st.form_submit_button("Inspect saved action and prepare offline candidate", disabled=demo or not c["enabled"]):
+                    try:
+                        candidates.prepare(store, sid, cid, selected, action["revision"], int(pid), widget)
+                        st.rerun()
+                    except ValueError:
+                        _error()
+            seen = set()
+            for row in d.records(store, sid, cid):
+                if row["kind"] != candidates.KIND:
+                    continue
+                data = row["payload"]["body"]["data"]
+                if data["action_id"] in seen:
+                    continue
+                seen.add(data["action_id"])
+                st.text(f"{data['action_id']} · revision {data['revision']} · {data['level']} · {d.status(store, sid, cid, row)}")
+                for reason in data["preparation_blockers"] + data["publication_blockers"]:
+                    st.warning(reason)
+                st.json(data)
+        else:
+            st.info("Save an exact action under Recommendations & changes first.")
     with st.expander("Version history, freshness and attempts"):
         for a in d.attempts(store, sid, cid):
             st.text(f"{a['kind']} · {a['started']} · {a['status']}" + (" (interrupted or still in progress)" if not a["finished"] else ""))

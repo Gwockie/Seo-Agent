@@ -118,7 +118,7 @@ def validate_installation(store, sid, destination, state):
         raise ValueError("Conflicting active plugin, MU-plugin or drop-in inventory")
 
 
-def staging_proof(store, sid, destination, frozen, state):
+def staging_proof(store, sid, destination, frozen, state, *, mapping=None):
     if destination["environment"] != "production":
         return None
     from . import publishing as p
@@ -127,7 +127,7 @@ def staging_proof(store, sid, destination, frozen, state):
                 or attempt["action_id"] != frozen["action_id"] or attempt["revision"] != frozen["revision"]):
             continue
         review = p.record(store, sid, "cms_reviews", attempt["review_id"])["payload"]
-        if review.get("history_only") or review["destination"]["environment"] != "staging":
+        if review.get("history_only") or review["destination"]["environment"] not in {"staging", "local"}:
             continue
         a = next((a for a in review["actions"] if a["action_id"] == frozen["action_id"] and a["revision"] == frozen["revision"]), None)
         event = p.latest_event(store, sid, attempt["id"])
@@ -139,7 +139,10 @@ def staging_proof(store, sid, destination, frozen, state):
                      "request": attempt["payload"]["request"], "verified_utc": event["result"]["written_utc"],
                      "contract_hash": state["contract_hash"]}
             proof["destination"] = {k: v for k, v in proof["destination"].items() if k != "credential_id"}
-            validate_staging_proof(store, sid, destination, {"staging_validation": proof})
+            validate_staging_proof(store, sid, destination, {"staging_validation": proof,
+                "action_id": frozen["action_id"], "revision": frozen["revision"],
+                "current": frozen["action"]["current"], "proposed": frozen["action"]["proposed"],
+                "before": state, "mapping": mapping})
             return proof
     raise ValueError("Production requires a successful verified staging Apply of this exact action revision on the matching certified stack")
 
@@ -147,22 +150,53 @@ def staging_proof(store, sid, destination, frozen, state):
 def validate_staging_proof(store, sid, destination, action):
     if destination["environment"] != "production":
         return
-    from . import publishing as p
+    from . import publishing as p, elementor_publishing as ep
     proof = action.get("staging_validation")
     if not proof or datetime.now(timezone.utc) - d.timestamp(proof["verified_utc"]) > timedelta(hours=24):
         raise ValueError("Fresh matching staging verification is required before production review/apply")
     validate_binding(store, sid, proof["destination"])
     attempt = p.record(store, sid, "cms_attempts", proof["attempt_id"])
+    review = p.record(store, sid, "cms_reviews", proof["review_id"])["payload"]
+    redacted = {k: v for k, v in review["destination"].items() if k != "credential_id"}
+    if (review.get("history_only") or review["fingerprint"] != p.t.digest({k: v for k, v in review.items() if k != "fingerprint"})
+            or redacted != proof["destination"] or redacted["environment"] not in {"staging", "local"}
+            or redacted.get("adapter") != ADAPTER or len(review["actions"]) != 1
+            or attempt["destination_key"] != p.cms_destination_key(redacted)):
+        raise ValueError("Staging proof destination/review lineage is invalid")
     if (attempt["payload"].get("history_only") or attempt["direction"] != "apply"
             or attempt["review_id"] != proof["review_id"] or attempt["action_id"] != proof["action_id"]
             or attempt["revision"] != proof["revision"] or attempt["payload"]["request"] != proof["request"]
             or action.get("action_id", proof["action_id"]) != proof["action_id"]
             or action.get("revision", proof["revision"]) != proof["revision"]):
         raise ValueError("Staging proof does not bind this exact action/revision/request")
+    staged = review["actions"][0]
+    auth = p.record(store, sid, "cms_authorizations", attempt["payload"]["authorization_id"])
+    batch, approved = p.approval(store, sid, review["batch_id"])
+    if (auth["payload"].get("history_only") or auth["review_id"] != proof["review_id"]
+            or auth["payload"]["fingerprint"] != review["fingerprint"]
+            or approved["id"] != review["approval_id"] or batch["payload"]["fingerprint"] != review["batch_fingerprint"]
+            or staged["action_id"] != action.get("action_id") or staged["revision"] != action.get("revision")
+            or staged.get("adapter") != ADAPTER or attempt["payload"]["object_id"] != staged["object_id"]
+            or any(staged[k] != action.get(k) for k in ("current", "proposed"))
+            or any(staged["before"][k] != action.get("before", {}).get(k)
+                   for k in ("contract_hash", "elementor_data", "content", "excerpt", "template"))
+            or proof["contract_hash"] != staged["before"]["contract_hash"]):
+        raise ValueError("Staging validation does not match the approved action and certified source")
+    if (not action.get("mapping") or any(d.canonical(staged["mapping"][k]) != d.canonical(action["mapping"].get(k))
+            for k in ("element_id", "ancestor_ids", "path", "tag", "current", "source_sha256"))):
+        raise ValueError("Staging validation targets a different widget/path")
+    expected_request = {"request_id": attempt["id"], "instance": redacted["instance"], "url": staged["url"],
+                        "token": staged["before"]["token"], "environment": redacted["environment"],
+                        **ep.request_fields(staged, "apply"), "current": staged["current"], "proposed": staged["proposed"]}
+    if proof["request"] != expected_request:
+        raise ValueError("Staging request differs from the exact authorized write")
     event = p.latest_event(store, sid, proof["attempt_id"])
     if (event.get("write") != "succeeded" or event.get("verification") != "passed"
             or event.get("result", {}).get("request") != proof["request"]
-            or event.get("result", {}).get("request_id") != proof["attempt_id"]):
+            or event.get("result", {}).get("request_id") != proof["attempt_id"]
+            or event.get("result", {}).get("status") != "applied"
+            or event.get("result", {}).get("before_token") != staged["before"]["token"]
+            or event.get("result", {}).get("written_utc") != proof["verified_utc"]):
         raise ValueError("Staging verification is no longer successful")
 
 
@@ -223,7 +257,7 @@ def readiness(store, sid):
         result["locally_validated"] = True
         all_attempts = p.rows(store, sid, "cms_attempts")
         attempts = [a for a in all_attempts if a["review_id"] == row["id"] and a["direction"] == "apply"]
-        if review["destination"]["environment"] == "staging" and attempts and all(
+        if review["destination"]["environment"] in {"staging", "local"} and attempts and all(
                 p.latest_event(store, sid, a["id"]).get("verification") == "passed" and
                 p.latest_event(store, sid, a["id"]).get("write") == "succeeded" for a in attempts) and len(attempts) == len(review["actions"]):
             result["staging_validated"] = True

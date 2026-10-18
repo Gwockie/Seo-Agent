@@ -130,6 +130,11 @@ to fill gaps or to fit the current publisher.
 
 ## Isolation and compatibility
 
+The separate [saved-action candidate workflow](actual-stack-validation.md) binds
+offline Elementor preparation to an existing audit action and latest revision.
+It reports missing evidence and unsupported targets without creating approval or
+loosening the pinned publishing contract.
+
 Isolation areas are `database`, `files_uploads`, `editor_settings`, `deployment`,
 `installation_identity`, `access_identity`, `no_sync`, `no_jobs_webhooks`,
 `no_customer_messages`, `restricted_access`, `noindex`. Each needs a concrete

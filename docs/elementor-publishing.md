@@ -61,7 +61,7 @@ own source review, effect contract and representative real integration tests.
    The app repeats fresh raw/rendered checks before each request. Revisions, replaced
    evidence, disconnected environments, changed facts/configuration or stale captures
    block the affected actions.
-6. Production preparation additionally requires a successful verified staging Apply
+6. Production preparation additionally requires a successful verified local or hosted staging Apply
    of this exact action/revision, with matching source JSON/mirror/excerpt/template
    and certificate within 24 hours. The proof binds the exact attempt/request and
    still-current isolation evidence; another action in a partial batch cannot supply
@@ -72,6 +72,12 @@ production review. It is never publication permission. Imported/restored history
 is inert. The app reuses authoritative records, workspace locks, independent site
 scope and the existing backup/migration protections; it does not create a second
 chat-based approval system. Agents must not click human approval controls.
+
+For unsupported installed stacks, [action-bound offline preparation](actual-stack-validation.md)
+records exact candidates or blockers before approvals. It does not broaden this
+certificate or enable publication. Local staging proof requires the same independent
+isolation review as hosted staging and binds the original authorized request,
+review, widget/path, source and verified receipt.
 
 ## Exact effect and recovery contract
 
