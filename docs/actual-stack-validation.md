@@ -11,6 +11,10 @@ exact old/new wording, factual confirmation state and public/administrator evide
 IDs. It records specific preparation blockers or an offline JSON candidate.
 Replacing either evidence source, changing the action or profile, disconnecting or
 reconfiguring the environment, expiry or restoring a backup invalidates the result.
+Referenced capture files, audit/rule context and the latest tracked source-page
+observation are also bound, including for blocked reports. A conflicting newer
+source observation blocks preparation until reconciled; a fresh local clone read
+cannot supersede a conflicting production observation.
 The captured structural action target must still identify the selected rendered
 heading; equal text elsewhere is not a match.
 

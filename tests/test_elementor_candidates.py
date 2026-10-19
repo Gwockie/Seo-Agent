@@ -1,12 +1,12 @@
 import copy
 import json
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
-from seo_agent import discovery as d, elementor_candidates as c, publishing as p, tracking as t
+from seo_agent import discovery as d, elementor_candidates as c, publishing as p, tracking as t, page_tracking as pt
 from seo_agent.backup import _backup, _restore
 from seo_agent.elementor import map_heading
 from seo_agent.previews import save_preview
@@ -137,6 +137,25 @@ class CandidateTests(TrackingFixture, unittest.TestCase):
         self.seed()
         self.assertEqual(d.status(self.store,self.sid,self.cid,row),"invalidated")
 
+    def test_capture_and_snapshot_changes_invalidate_prepared_and_blocked_reports(self):
+        path=self.store.audit_file(self.sid,self.aid,"data","review-preview.json")
+        original=path.read_text(encoding="utf8")
+        prepared=self.prepare()
+        # Same structural target, different evidence bytes still invalidates.
+        path.write_text(original+"\n",encoding="utf8")
+        self.assertEqual(d.status(self.store,self.sid,self.cid,prepared),"invalidated")
+        path.write_text(original,encoding="utf8")
+        target_id=self.action["payload"]["evidence"][0]["node_id"]
+        path.write_text(original.replace('"'+target_id+'"','"r99"'),encoding="utf8")
+        blocked=self.prepare()
+        self.assertIsNone(blocked["payload"]["body"]["data"]["candidate"])
+        self.assertEqual(d.status(self.store,self.sid,self.cid,blocked),"current")
+        path.write_text(original,encoding="utf8")
+        self.assertEqual(d.status(self.store,self.sid,self.cid,blocked),"invalidated")
+        prepared=self.prepare()
+        self.snapshot()
+        self.assertEqual(d.status(self.store,self.sid,self.cid,prepared),"invalidated")
+
     def test_backup_candidate_is_inert_after_reconnection(self):
         self.prepare()
         archive=self.root/"backup.zip";_backup(self.store,archive)
@@ -146,6 +165,26 @@ class CandidateTests(TrackingFixture, unittest.TestCase):
         row=next(r for r in d.records(restored,self.sid,self.cid) if r["kind"]==c.KIND)
         self.assertEqual(d.status(restored,self.sid,self.cid,row),"invalidated")
         self.assertIsNone(p.destination(restored,self.sid))
+
+    def test_known_source_snapshot_conflict_cannot_be_reprepared_as_current(self):
+        prepared=self.prepare()
+        html=HTML.replace("<html>", "<html><head><title>Synthetic page</title></head>").replace("Our service", "Externally changed service")
+        headers={"content-type":"text/html"}
+        pt.save_snapshot(self.store,self.sid,self.value["url"],status="complete",payload=dict(
+            html=html,values=pt.extract(html,self.value["url"],headers),headers=headers,http_status=200,final_url=self.value["url"]))
+        self.assertEqual(d.status(self.store,self.sid,self.cid,prepared),"invalidated")
+        blocked=self.prepare()["payload"]["body"]["data"]
+        self.assertIsNone(blocked["candidate"])
+        self.assertTrue(any("observation conflicts" in b for b in blocked["preparation_blockers"]))
+        # Fresh production discovery supersedes the older observation.
+        self.seed()
+        self.assertIsNotNone(self.prepare()["payload"]["body"]["data"]["candidate"])
+        # A newer local clone read cannot supersede a contradictory production observation.
+        d.configure(self.store,self.sid,dict(label="Local",provider="Synthetic",method="public",url="http://127.0.0.1:18700/",
+                    environment="local",installation_id="separate-local"),cid=self.cid)
+        self.public["pages"][0]["url"]=self.public["captures"][0]["url"]=self.admin["pages"][0]["url"]="http://127.0.0.1:18700/"
+        self.seed()
+        self.assertIsNone(self.prepare()["payload"]["body"]["data"]["candidate"])
 
     def test_ui_prepares_saved_revision_without_human_approval(self):
         app=AppTest.from_function(discovery_app,args=(str(self.store.root),self.sid),default_timeout=30).run()

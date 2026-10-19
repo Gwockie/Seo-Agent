@@ -13,7 +13,8 @@ from . import discovery as d, tracking as t
 from .coordination import run_lock, workspace_lock
 from .elementor import HeadingMapping, _parse, _unlinked, bind_rendered_heading
 from .elementor_publishing import plain, bind_target
-from .page_tracking import capture_target
+from .proposal_review import context_binding
+from .page_tracking import latest_snapshot, observed_value
 from .publishing import mapped_url
 
 KIND = "elementor_candidate"
@@ -84,7 +85,7 @@ def dependencies_current(store, sid, cid, data):
         row = current_action(store, sid, data["action_id"], data["revision"])
         if row["audit_id"] != data["audit_id"] or d.digest(row["payload"]) != data["action_sha256"]:
             return False
-        if data.get("candidate") and capture_target(store, sid, row) != data["target"]:
+        if context_binding(store, sid, row) != data.get("action_context"):
             return False
         for kind, field in (("public", "public_evidence_id"), ("administrator_export", "administrator_evidence_id")):
             parent = d.latest(store, sid, cid, kind)
@@ -112,7 +113,8 @@ def prepare(store, sid, cid, action_id, revision, page_id, element_id):
         url = mapped_url(c, store.site(sid).url, value["url"])
         public, admin = (d.latest(store, sid, cid, kind) for kind in ("public", "administrator_export"))
         report = {"schema": "elementor-local-candidate/1", "action_id": action_id, "revision": revision,
-            "audit_id": row["audit_id"], "action_sha256": d.digest(value), "source_url": value["url"], "url": url,
+            "audit_id": row["audit_id"], "action_sha256": d.digest(value), "action_context": context_binding(store, sid, row),
+            "source_url": value["url"], "url": url,
             "page_id": page_id, "element_id": element_id, "current": value["current"], "proposed": value["proposed"],
             "confirmations": value["confirmations"], "public_evidence_id": public["id"] if public else None,
             "administrator_evidence_id": admin["id"] if admin else None, "candidate": None,
@@ -128,6 +130,16 @@ def prepare(store, sid, cid, action_id, revision, page_id, element_id):
             blocked.append("Refresh current independent public REST/rendered evidence")
         if not admin:
             blocked.append("Collect current protected administrator page/raw metadata-row evidence and installation identity")
+        snapshot = latest_snapshot(store, sid, value["url"])
+        # A clone's newer capture cannot supersede a known observation of its
+        # production source. For production, a newer independent read can do so.
+        if snapshot and public and (c["environment"] != "production" or
+                d.timestamp(snapshot["checked"]) >= d.timestamp(public["payload"]["body"]["observed_utc"])):
+            if snapshot["status"] != "complete":
+                blocked.append("Latest source-page observation is unavailable; refresh and reconcile source evidence")
+            elif observed_value(snapshot["payload"]["values"], value, target=report["action_context"]["target"],
+                                html=snapshot["payload"]["html"]) != value["current"]:
+                blocked.append("Latest source-page observation conflicts with the saved action; refresh and reconcile discovery and proposal evidence")
         if not blocked:
             pd, ad = (r["payload"]["body"]["data"] for r in (public, admin))
             page = next((p for p in ad.get("pages", []) if p["id"] == page_id and p["type"] == "page"), None)
@@ -151,7 +163,7 @@ def prepare(store, sid, cid, action_id, revision, page_id, element_id):
                         if proposed == mapping.current:
                             raise ValueError("Saved action has no heading change")
                         bind_rendered_heading(capture["html"], mapping)
-                        target = capture_target(store, sid, row)
+                        target = report["action_context"]["target"]
                         bind_target({"html": capture["html"]}, target, mapping)
                         report["target"] = target
                         replacement = json.dumps(proposed, ensure_ascii=True)
