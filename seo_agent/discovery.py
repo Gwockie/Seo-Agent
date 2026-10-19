@@ -14,7 +14,7 @@ from .discovery_models import (Connection, AdministratorExport, MAX_BYTES, ISOLA
                                canonical, parse, reject, safe_data, timestamp)
 from .discovery_client import DiscoveryVault, DiscoveryReader, page_url
 
-KINDS = {"public", "authenticated", "administrator_export", "mapping", "isolation_review", "publisher_host_review"}
+KINDS = {"public", "authenticated", "administrator_export", "mapping", "isolation_review", "publisher_host_review", "elementor_candidate"}
 MAX_AGE = timedelta(hours=24)
 
 
@@ -130,6 +130,10 @@ def status(store, sid, cid, row):
         return "invalidated"
     if datetime.now(timezone.utc) - timestamp(body["observed_utc"]) > MAX_AGE:
         return "stale"
+    if row["kind"] == "elementor_candidate":
+        from .elementor_candidates import dependencies_current
+        if not dependencies_current(store, sid, cid, body["data"]):
+            return "invalidated"
     if row["kind"] in {"mapping", "isolation_review", "publisher_host_review"}:
         if row["kind"] == "isolation_review":
             production = [{k: p[k] for k in ("id", "generation", "installation_id")}

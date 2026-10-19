@@ -198,6 +198,65 @@ class ElementorPublishingTests(TrackingFixture, unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "successful verified staging"):
             setup.staging_proof(self.store, self.sid, {"environment": "production"}, frozen, self.client.state(3))
 
+    def local_proof(self):
+        rid = self.ready()
+        action = p.record(self.store, self.sid, "cms_reviews", rid)["payload"]["actions"][0]
+        self.apply(rid)
+        frozen = {"action_id": self.record["action_id"], "revision": 2, "action": self.record["payload"]}
+        destination = {**self.client.destination, "environment": "production", "instance": "production-install", "url": self.value["url"]}
+        proof = setup.staging_proof(self.store, self.sid, destination, frozen, action["before"], mapping=action["mapping"])
+        return rid, destination, {**action, "staging_validation": proof}
+
+    def test_verified_local_apply_can_supply_exact_staging_proof(self):
+        rid, destination, action = self.local_proof()
+        proof = action["staging_validation"]
+        self.assertEqual(proof["destination"]["environment"], "local")
+        self.assertNotIn("credential_id", proof["destination"])
+        setup.validate_staging_proof(self.store, self.sid, destination, action)
+        self.assertTrue(setup.readiness(self.store, self.sid)["staging_validated"])
+        self.assertFalse(setup.readiness(self.store, self.sid)["production_ready"])
+        # A separately authorized inverse preserves the historical validated apply.
+        self.apply(rid, direction="rollback")
+        setup.validate_staging_proof(self.store, self.sid, destination, action)
+        with patch.object(setup, "validate_binding", side_effect=ValueError("Isolation evidence changed")), self.assertRaises(ValueError):
+            setup.validate_staging_proof(self.store, self.sid, destination, action)
+
+    def test_local_proof_rejects_wrong_source_path_destination_and_receipt(self):
+        _, destination, action = self.local_proof()
+        for change in ("path", "source", "contract", "destination", "time", "request", "revision"):
+            bad = copy.deepcopy(action)
+            if change == "path": bad["mapping"]["element_id"] = "heading2"
+            elif change == "source": bad["before"]["content"] += " changed"
+            elif change == "contract": bad["staging_validation"]["contract_hash"] = "f" * 64
+            elif change == "destination": bad["staging_validation"]["destination"]["instance"] = "another-install"
+            elif change == "time": bad["staging_validation"]["verified_utc"] = (datetime.now(timezone.utc)-timedelta(hours=25)).isoformat()
+            elif change == "request": bad["staging_validation"]["request"]["metadata_row_id"] = 43
+            else: bad["revision"] = 3
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                setup.validate_staging_proof(self.store,self.sid,destination,bad)
+        proof = action["staging_validation"]
+        original = p.latest_event(self.store,self.sid,proof["attempt_id"])
+        for changes in ({"status":"unknown"}, {"before_token":"f"*64}, {"written_utc":utc_now()}):
+            event = copy.deepcopy(original);event["result"].update(changes)
+            with patch.object(p,"latest_event",return_value=event), self.assertRaises(ValueError):
+                setup.validate_staging_proof(self.store,self.sid,destination,action)
+
+    def test_local_proof_requires_original_authorization_and_live_history(self):
+        rid,destination,action=self.local_proof()
+        attempt=p.record(self.store,self.sid,"cms_attempts",action["staging_validation"]["attempt_id"])
+        auth=p.record(self.store,self.sid,"cms_authorizations",attempt["payload"]["authorization_id"])
+        with self.store.db() as db:
+            db.execute("UPDATE cms_authorizations SET payload=? WHERE id=?",(t.canonical({**auth["payload"],"history_only":True}),auth["id"]))
+        with self.assertRaises(ValueError):setup.validate_staging_proof(self.store,self.sid,destination,action)
+        with self.store.db() as db:
+            db.execute("UPDATE cms_authorizations SET payload=? WHERE id=?",(t.canonical(auth["payload"]),auth["id"]))
+        review=p.record(self.store,self.sid,"cms_reviews",rid)["payload"]
+        review["history_only"]=True
+        review["fingerprint"]=t.digest({k:v for k,v in review.items() if k!="fingerprint"})
+        with self.store.db() as db:
+            db.execute("UPDATE cms_reviews SET payload=? WHERE id=?",(t.canonical(review),rid))
+        with self.assertRaises(ValueError):setup.validate_staging_proof(self.store,self.sid,destination,action)
+
     def test_two_page_batch_is_rejected_before_review_or_attempt(self):
         self.value["url"] = "https://example.com/second/"
         self.aid = self.store.create_audit(self.sid)
