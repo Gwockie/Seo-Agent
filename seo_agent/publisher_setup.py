@@ -32,7 +32,13 @@ def host_requirements(store, sid, cid):
     data = admin["payload"]["body"]["data"]
     if set(data["complete_inventory"]) != {"core", "php", "database", "table_engine", "theme", "plugin", "mu_plugin", "dropin"}:
         raise ValueError("Complete versioned software, MU-plugin, drop-in and table-engine inventory is required")
-    preflight = inspect_inventory(data, phase="installed")
+    auth = d.latest(store, sid, cid, "authenticated", current=False)
+    if auth and auth["payload"]["body"]["scope"] == d.scope(store, sid, c):
+        if d.status(store, sid, cid, auth) != "current":
+            raise ValueError("Refresh the previously collected authenticated REST evidence before host review")
+    else:
+        auth = None
+    preflight = inspect_inventory(data, phase="installed", authenticated=auth["payload"]["body"]["data"] if auth else None)
     if preflight["missing"] or preflight["conflicts"]:
         raise ValueError("Pinned Elementor inventory is incomplete or incompatible: " +
                          "; ".join(preflight["conflicts"] + preflight["missing"]))
@@ -42,7 +48,7 @@ def host_requirements(store, sid, cid):
         if (not fact or fact["result"] not in {"observed", "isolated"}
                 or len(fact["observation"].strip()) < 20 or len(fact["source_reference"].strip()) < 5):
             raise ValueError("Missing concrete host evidence for " + area)
-    return c, admin, public
+    return c, admin, public, auth
 
 
 def review_host(store, sid, cid, *, human_clicked, source, conditions):
@@ -50,9 +56,10 @@ def review_host(store, sid, cid, *, human_clicked, source, conditions):
     if human_clicked is not True or conditions != list(HOST_CONDITIONS) or not 10 <= len(source.strip()) <= 300:
         raise ValueError("Independent human review of every exact host effect condition and its source is required")
     with run_lock(workspace_lock(store.root)):
-        c, admin, public = host_requirements(store, sid, cid)
+        c, admin, public, auth = host_requirements(store, sid, cid)
         return d._save(store, sid, c, "publisher_host_review", {
             "evidence_id": admin["id"], "public_evidence_id": public["id"], "human_review_source": source,
+            "authenticated_evidence_id": auth["id"] if auth else None,
             "contract": CONTRACT, "conditions": list(HOST_CONDITIONS)},
             source="Independent human review of provider/CMS records", certainty="human_reviewed")
 
@@ -74,11 +81,12 @@ def evidence_binding(store, sid, *, url, instance, environment, adapter, discove
         result["isolation"] = isolation
         result["isolation_review_id"] = d.latest(store, sid, discovery_id, "isolation_review")["id"]
     if adapter == ADAPTER:
-        _, admin, public = host_requirements(store, sid, discovery_id)
+        _, admin, public, auth = host_requirements(store, sid, discovery_id)
         review = d.latest(store, sid, discovery_id, "publisher_host_review")
         if not review:
             raise ValueError("Review the pinned adapter's exact host effect conditions in Hosting & CMS")
-        result.update(administrator_evidence_id=admin["id"], public_evidence_id=public["id"], host_review_id=review["id"])
+        result.update(administrator_evidence_id=admin["id"], public_evidence_id=public["id"],
+                      authenticated_evidence_id=auth["id"] if auth else None, host_review_id=review["id"])
     return result
 
 
@@ -238,7 +246,7 @@ def setup_packet(store, sid, cid=None):
         "recovery": "Before setup capture protected database/files/configuration baseline. On failure deactivate/remove only these new files, restore the prior constants and revoke only the new credential/account/role if unused. Retain the operation journal for reconciliation; never drop it to enable retries.",
         "blockers": ["Provider/account and installation evidence required"] if not report else list(dict.fromkeys(
             report["missing"] + report["blockers"] + report["elementor_preflight"]["missing"] +
-            ["Administrator assertion: " + item for item in report["elementor_preflight"]["conflicts"]])),
+            report["elementor_preflight"]["conflicts"])),
         "inventory_preflight": report["elementor_preflight"] if report else None,
         "approval": "This is a review packet, not permission. No setup execution is provided by the app."}
 

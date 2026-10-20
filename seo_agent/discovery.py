@@ -144,6 +144,17 @@ def status(store, sid, cid, row):
                 if row["kind"] == "mapping" else {"administrator_export": body["data"]["evidence_id"]})
         if row["kind"] == "publisher_host_review":
             deps["public"] = body["data"]["public_evidence_id"]
+            # Bind even the absence of REST evidence. A newly collected record,
+            # replacement or expiry requires a fresh independent human review.
+            if "authenticated_evidence_id" not in body["data"]:
+                return "invalidated"
+            auth = latest(store, sid, cid, "authenticated", current=False)
+            if auth and auth["payload"]["body"]["scope"] != body["scope"]:
+                auth = None
+            if auth and status(store, sid, cid, auth) != "current":
+                return "invalidated"
+            if body["data"]["authenticated_evidence_id"] != (auth["id"] if auth else None):
+                return "invalidated"
         for kind, eid in deps.items():
             parent = latest(store, sid, cid, kind)
             if not parent or parent["id"] != eid:
@@ -382,9 +393,9 @@ def compatibility(store, sid, cid):
         blockers.append("Elementor mapping alone cannot enable publication. The separate pinned canvas-heading adapter requires matching fresh runtime and independently reviewed host/staging evidence; other stacks remain unsupported.")
     if not public:
         blockers.append("Refresh current public REST identities before cross-checking any imported page mapping.")
-    pinned = inspect_inventory(admin)
+    pinned = inspect_inventory(admin, authenticated=auth)
     if has_elementor:
-        blockers.extend("Administrator assertion: " + message for message in pinned["conflicts"])
+        blockers.extend(pinned["conflicts"])
     return {"schema_version": 1, "scope": scope(store, sid, c), "evaluated_utc": utc_now(),
             "publishing_compatible": False, "confirmed": confirmed, "inferred": inferred,
             "administrator_asserted": asserted, "missing": missing,

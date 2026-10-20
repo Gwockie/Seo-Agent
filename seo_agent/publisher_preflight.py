@@ -6,7 +6,7 @@ In particular, no engine or table identity is inferred from a server default.
 from .elementor_publishing import ADAPTER, adapter_hash, contract_manifest
 
 
-def inspect_inventory(data, *, phase="setup"):
+def inspect_inventory(data, *, phase="setup", authenticated=None):
     if phase not in {"setup", "installed"}:
         raise ValueError("Unknown publisher preflight phase")
     manifest = contract_manifest()
@@ -72,7 +72,27 @@ def inspect_inventory(data, *, phase="setup"):
         elif row["version"] != "InnoDB":
             conflicts.append(f"{role} table {row['name']} uses {row['version']}; {ADAPTER} requires InnoDB "
                              "for atomic content, mirror and journal writes. A server default or another table cannot substitute.")
+    # REST inventory can be partial. Compare only returned facts; omission never
+    # proves absence or repairs an incomplete administrator inventory.
+    pinned = {("theme", manifest["theme"]): manifest["theme_version"],
+              ("plugin", "elementor/elementor.php"): manifest["elementor"],
+              ("plugin", companion): "0.2.0"}
+    for row in (authenticated or {}).get("software", []):
+        key = row["kind"], row["name"]
+        label = f"Authenticated REST {row['kind']} {row['name']}"
+        if row["kind"] not in {"theme", "plugin"}:
+            continue
+        if row.get("active") is True and key not in pinned:
+            conflicts.append(f"{label} is active outside the pinned Elementor certificate.")
+        if key in pinned and row.get("version") and row["version"] != pinned[key]:
+            conflicts.append(f"{label} version {row['version']} differs from pinned {pinned[key]}.")
+        for asserted in (s for s in software if (s["kind"], s["name"]) == key):
+            for field in ("version", "active"):
+                known = (row.get(field) is not None and asserted.get(field) is not None
+                         if field == "active" else bool(row.get(field) and asserted.get(field)))
+                if known and row[field] != asserted[field]:
+                    conflicts.append(f"{label} {field} contradicts the administrator assertion; reconcile fresh evidence.")
     return {"adapter": ADAPTER, "phase": phase, "certainty": "administrator_asserted",
             "missing": list(dict.fromkeys(missing)), "conflicts": list(dict.fromkeys(conflicts)),
             "publishing_compatible": False,
-            "note": "This compares current asserted inventory only. Fresh certified endpoint checks, host effects, staging validation and exact approvals remain required. Do not alter production to fit this certificate."}
+            "note": "Administrator inventory is asserted; separately labelled authenticated REST facts can reveal contradictions but never prove completeness. Fresh certified endpoint checks, host effects, staging validation and exact approvals remain required. Do not alter production to fit this certificate."}

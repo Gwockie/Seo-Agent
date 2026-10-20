@@ -250,6 +250,14 @@ administrator-sourced until an actual provider and authorized read route are kno
 
 ## Synthetic validation
 
+Elementor preflight also compares returned authenticated plugin/theme facts with
+the pinned certificate and administrator assertions. Contradictions block host
+review and destination binding. REST inventory is partial: missing rows or unknown
+statuses do not prove inactivity or completeness. Host review binds the exact
+authenticated evidence record, including its absence. Addition, replacement or
+expiry invalidates that review; previously collected stale evidence must be
+refreshed before another review. Imported assertions never become confirmed facts.
+
 ```powershell
 $env:TEMP = Join-Path (Get-Location) '.tmp'
 $env:TMP = $env:TEMP

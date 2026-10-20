@@ -84,3 +84,20 @@ class InventoryPreflightTests(unittest.TestCase):
         self.assertTrue(inspect_inventory(data)["conflicts"])
         with self.assertRaises(ValueError):
             inspect_inventory(data, phase="unknown")
+
+    def test_partial_authenticated_facts_cannot_be_overridden_by_assertions(self):
+        data = certified_inventory(installed=True)
+        cases = [dict(kind="plugin", name="extra/cache.php", active=True),
+                 dict(kind="theme", name="another-theme", active=True),
+                 dict(kind="plugin", name="elementor/elementor.php", version="unsupported", active=True),
+                 dict(kind="plugin", name="elementor/elementor.php", active=False)]
+        for row in cases:
+            with self.subTest(row=row):
+                report = inspect_inventory(data, authenticated={"software": [row]})
+                self.assertTrue(any("Authenticated REST" in x for x in report["conflicts"]))
+        # Omitted rows/unknown values prove neither absence nor disagreement.
+        for rows in ([], [dict(kind="plugin", name="elementor/elementor.php", version="", active=None)],
+                     [dict(kind="plugin", name="unused/cache.php", active=False)]):
+            self.assertEqual(inspect_inventory(data, authenticated={"software": rows})["conflicts"], [])
+        report = inspect_inventory({}, authenticated={"software": data["software"]})
+        self.assertTrue(report["missing"])

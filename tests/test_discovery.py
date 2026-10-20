@@ -481,6 +481,13 @@ class ReaderLoopbackTests(unittest.TestCase):
         self.assertFalse(self.reader.session.trust_env)
         with self.assertRaises(ValueError):
             self.reader._get("?rest_route=/wp/v2/settings", authenticated=True)
+    def test_authenticated_unknown_status_is_not_reported_as_inactive(self):
+        plugins = [dict(plugin="synthetic/" + str(i), status=value, version="1")
+                   for i, value in enumerate(("active", "network-active", "inactive", "unknown", None))]
+        with patch.object(self.reader, "_get", side_effect=[plugins, []]):
+            auth = self.reader.authenticated([])
+        self.assertEqual([s["active"] for s in auth["software"]], [True, True, False, None, None])
+
     def test_redirect_not_followed_or_retried_and_budget_enforced(self):
         self.response_mode = "redirect"
         with self.assertRaises(ValueError) as error:

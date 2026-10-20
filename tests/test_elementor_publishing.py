@@ -406,7 +406,7 @@ class HostingBindingTests(TrackingFixture, unittest.TestCase):
         self.assertEqual(len(packet["files"]["elementor-publisher.php"]), 64)
         self.assertFalse(p.rows(self.store, self.sid, "cms_authorizations"))
 
-    def test_elementor_host_binding_crosschecks_live_inventory_and_replacement_invalidates(self):
+    def elementor_host(self):
         self.stage()
         c = d.connection(self.store, self.sid, self.cid)
         data = copy.deepcopy(d.latest(self.store, self.sid, self.cid, "administrator_export")["payload"]["body"]["data"])
@@ -433,6 +433,10 @@ class HostingBindingTests(TrackingFixture, unittest.TestCase):
         d._save(self.store, self.sid, c, "administrator_export", data)
         d._save(self.store, self.sid, c, "public", {"pages":[dict(id=3,url=state["url"],template=state["template"])], "clues":[]})
         d.review_isolation(self.store, self.sid, self.cid, human_clicked=True, source="Synthetic independent review")
+        return c, state, inv
+
+    def test_elementor_host_binding_crosschecks_live_inventory_and_replacement_invalidates(self):
+        c, state, inv = self.elementor_host()
         with self.assertRaisesRegex(ValueError, "host effect"):
             setup.evidence_binding(self.store, self.sid, url=c["url"], instance=c["installation_id"],
                 environment="staging", adapter=ep.ADAPTER, discovery_id=self.cid)
@@ -445,8 +449,8 @@ class HostingBindingTests(TrackingFixture, unittest.TestCase):
         setup.validate_installation(self.store, self.sid, destination, state)
         # Complete labels and a human checkbox cannot override contradictory rows.
         original = d.latest
-        def conflicting(store, sid, cid, kind):
-            row = original(store, sid, cid, kind)
+        def conflicting(store, sid, cid, kind, **kwargs):
+            row = original(store, sid, cid, kind, **kwargs)
             if kind == "administrator_export":
                 row = copy.deepcopy(row)
                 next(s for s in row["payload"]["body"]["data"]["software"]
@@ -464,6 +468,59 @@ class HostingBindingTests(TrackingFixture, unittest.TestCase):
                 setup.validate_installation(self.store, self.sid, destination, {**state, **bad})
         row = d.latest(self.store, self.sid, self.cid, "public")
         d._save(self.store, self.sid, c, "public", row["payload"]["body"]["data"])
+        with self.assertRaises(ValueError): setup.validate_binding(self.store, self.sid, destination)
+
+    def test_authenticated_inventory_conflicts_block_host_review_and_destination(self):
+        c, _, _ = self.elementor_host()
+        setup.review_host(self.store, self.sid, self.cid, human_clicked=True,
+                          source="Synthetic independent review", conditions=list(setup.HOST_CONDITIONS))
+        binding = setup.evidence_binding(self.store, self.sid, url=c["url"], instance=c["installation_id"],
+                                        environment="staging", adapter=ep.ADAPTER, discovery_id=self.cid)
+        destination = {**p.destination(self.store, self.sid), "adapter": ep.ADAPTER, "discovery_binding": binding}
+        for row in (dict(kind="plugin", name="extra-cache/extra-cache.php", version="1", active=True),
+                    dict(kind="theme", name=ep.contract_manifest()["theme"], version="unsupported", active=True),
+                    dict(kind="plugin", name="elementor/elementor.php", version=ep.contract_manifest()["elementor"], active=False)):
+            with self.subTest(row=row):
+                d._save(self.store, self.sid, c, "authenticated", {"software": [row]})
+                self.assertTrue(any("Authenticated REST" in x for x in d.compatibility(self.store, self.sid, self.cid)["blockers"]))
+                self.assertIsNone(d.latest(self.store, self.sid, self.cid, "publisher_host_review"))
+                with self.assertRaisesRegex(ValueError, "Authenticated REST"):
+                    setup.review_host(self.store, self.sid, self.cid, human_clicked=True,
+                                      source="Synthetic independent review", conditions=list(setup.HOST_CONDITIONS))
+                with self.assertRaisesRegex(ValueError, "Authenticated REST"):
+                    setup.validate_binding(self.store, self.sid, destination)
+
+    def test_authenticated_evidence_addition_replacement_and_expiry_require_new_review(self):
+        c, _, _ = self.elementor_host()
+        def review():
+            return setup.review_host(self.store, self.sid, self.cid, human_clicked=True,
+                                     source="Synthetic independent review", conditions=list(setup.HOST_CONDITIONS))
+        def bind():
+            return setup.evidence_binding(self.store, self.sid, url=c["url"], instance=c["installation_id"],
+                                          environment="staging", adapter=ep.ADAPTER, discovery_id=self.cid)
+        first = review()
+        binding = bind()
+        self.assertIsNone(binding["authenticated_evidence_id"])
+        destination = {**p.destination(self.store, self.sid), "adapter": ep.ADAPTER, "discovery_binding": binding}
+        for _ in range(2):
+            eid = d._save(self.store, self.sid, c, "authenticated", {"software": [], "missing": ["Partial inventory"]})
+            with self.assertRaises(ValueError): setup.validate_binding(self.store, self.sid, destination)
+            self.assertIsNone(d.latest(self.store, self.sid, self.cid, "publisher_host_review"))
+            review()
+            binding = bind()
+            self.assertEqual(binding["authenticated_evidence_id"], eid)
+            destination["discovery_binding"] = binding
+            setup.validate_binding(self.store, self.sid, destination)
+        auth = d.latest(self.store, self.sid, self.cid, "authenticated")
+        body = auth["payload"]["body"]
+        body["observed_utc"] = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        with self.store.db() as db:
+            db.execute("UPDATE discovery_evidence SET payload=? WHERE id=?", (d.canonical(dict(body=body, sha256=d.digest(body))), eid))
+        self.assertIsNone(d.latest(self.store, self.sid, self.cid, "publisher_host_review"))
+        self.assertEqual(d.status(self.store, self.sid, self.cid,
+                                 next(r for r in d.records(self.store, self.sid, self.cid) if r["id"] == first)), "invalidated")
+        with self.assertRaisesRegex(ValueError, "Refresh.*authenticated"):
+            review()
         with self.assertRaises(ValueError): setup.validate_binding(self.store, self.sid, destination)
 
 
