@@ -428,6 +428,8 @@ class HostingBindingTests(TrackingFixture, unittest.TestCase):
             ("plugin","elementor/elementor.php",inv["elementor"],inv["elementor_files"]),
             ("plugin","local-seo-publisher/local-seo-publisher.php","0.2.0",inv["adapter_hash"]),
             ("php","PHP",inv["php"],None), ("database","MariaDB",inv["database"],None))]
+        data["software"].extend(dict(kind="table_engine", name="synthetic_" + role, version="InnoDB", table_role=role, active=None)
+                                for role in ("posts", "postmeta", "options", "journal"))
         d._save(self.store, self.sid, c, "administrator_export", data)
         d._save(self.store, self.sid, c, "public", {"pages":[dict(id=3,url=state["url"],template=state["template"])], "clues":[]})
         d.review_isolation(self.store, self.sid, self.cid, human_clicked=True, source="Synthetic independent review")
@@ -441,6 +443,21 @@ class HostingBindingTests(TrackingFixture, unittest.TestCase):
         destination = {**p.destination(self.store, self.sid), "adapter":ep.ADAPTER, "discovery_binding":binding}
         setup.validate_binding(self.store, self.sid, destination)
         setup.validate_installation(self.store, self.sid, destination, state)
+        # Complete labels and a human checkbox cannot override contradictory rows.
+        original = d.latest
+        def conflicting(store, sid, cid, kind):
+            row = original(store, sid, cid, kind)
+            if kind == "administrator_export":
+                row = copy.deepcopy(row)
+                next(s for s in row["payload"]["body"]["data"]["software"]
+                     if s.get("table_role") == "posts")["version"] = "MyISAM"
+            return row
+        with patch.object(d, "latest", side_effect=conflicting):
+            with self.assertRaisesRegex(ValueError, "MyISAM"):
+                setup.review_host(self.store, self.sid, self.cid, human_clicked=True,
+                                  source="Synthetic independent review", conditions=list(setup.HOST_CONDITIONS))
+            with self.assertRaisesRegex(ValueError, "MyISAM"):
+                setup.validate_binding(self.store, self.sid, destination)
         for bad in ({"metadata_row_id":43}, {"template":"elementor_header_footer"},
                     {"inventory":{**inv, "elementor":"4.3.4"}}):
             with self.subTest(bad=list(bad)), self.assertRaises(ValueError):

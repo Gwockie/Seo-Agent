@@ -265,6 +265,9 @@ def validate_export(raw, store, sid, c):
             reject()
         if len({(s.kind, s.name) for s in bundle.software}) != len(bundle.software):
             reject()
+        roles = [s.table_role for s in bundle.software if s.table_role is not None]
+        if len(set(roles)) != len(roles) or any(s.table_role is not None and s.kind != "table_engine" for s in bundle.software):
+            reject()
         if len({h.area for h in bundle.host}) != len(bundle.host):
             reject()
         rows = set()
@@ -331,6 +334,7 @@ def export_file(store, sid, cid, path, *, template=False):
 
 
 def compatibility(store, sid, cid):
+    from .publisher_preflight import inspect_inventory
     c = connection(store, sid, cid)
     rows = records(store, sid, cid)
     current = {}
@@ -366,11 +370,11 @@ def compatibility(store, sid, cid):
         missing.append("Administrator page/template/raw excerpt/metadata row and shared reference evidence")
     missing += public.get("missing", []) + auth.get("missing", [])
     isolation = isolation_status(store, sid, cid, current)
-    blocker = "Discovery does not certify a writable installation. Version 1 remains restricted to the documented core-heading stack and fresh publisher preflight."
+    blocker = "Discovery alone does not certify a writable installation. A matching pinned publisher endpoint and fresh host/staging validation are required."
     has_elementor = any("elementor" in s["name"].lower() for s in admin.get("software", []) + auth.get("software", [])) or any("elementor" in x["value"].lower() for x in public.get("clues", []))
     blockers = [blocker]
     for s in auth.get("software", []) + admin.get("software", []):
-        if s["active"] is True and ((s["kind"] == "plugin" and s["name"] != "local-seo-publisher/local-seo-publisher.php")
+        if not has_elementor and s["active"] is True and ((s["kind"] == "plugin" and s["name"] != "local-seo-publisher/local-seo-publisher.php")
                                     or s["kind"] == "theme" and s["name"] != "twentytwentyfive"
                                     or s["kind"] in {"mu_plugin", "dropin"}):
             blockers.append(f"Recorded active {s['kind']} {s['name']} is outside the version 1 core-heading contract (see source certainty).")
@@ -378,11 +382,14 @@ def compatibility(store, sid, cid):
         blockers.append("Elementor mapping alone cannot enable publication. The separate pinned canvas-heading adapter requires matching fresh runtime and independently reviewed host/staging evidence; other stacks remain unsupported.")
     if not public:
         blockers.append("Refresh current public REST identities before cross-checking any imported page mapping.")
+    pinned = inspect_inventory(admin)
+    if has_elementor:
+        blockers.extend("Administrator assertion: " + message for message in pinned["conflicts"])
     return {"schema_version": 1, "scope": scope(store, sid, c), "evaluated_utc": utc_now(),
             "publishing_compatible": False, "confirmed": confirmed, "inferred": inferred,
             "administrator_asserted": asserted, "missing": missing,
             "stale_or_invalidated": [{"id": r["id"], "version": r["version"], "kind": r["kind"], "status": status(store, sid, cid, r)} for r in rows if status(store, sid, cid, r) != "current"],
-            "blockers": blockers, "staging": isolation,
+            "blockers": blockers, "staging": isolation, "elementor_preflight": pinned, "elementor_detected": has_elementor,
             "supported_combinations": [{"adapter": "core-heading/1", "validated_fixture": "WordPress 7.1.3 / PHP 8.3 / MariaDB 11.4 / Twenty Twenty-Five",
                 "requirements": "Only the publisher companion active; no MU/drop-ins/multisite/custom/shared templates; flat core blocks, unique explicit heading anchor and explicit excerpt. Fresh server checks and host validation required.",
                 "installation_status": "not_certified_by_discovery"}, {"adapter": "elementor-heading/1", "installation_status": "requires_separate_certified_endpoint_and_host_review",

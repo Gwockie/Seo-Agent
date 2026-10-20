@@ -115,6 +115,16 @@ keys `_elementor_data`, `_elementor_page_settings`, `_elementor_edit_mode`,
 IDs must come from administrator evidence; they cannot be inferred from HTML.
 Nested credential-bearing settings are rejected even inside JSON strings.
 
+For `table_engine` entries, `name` is the exact database table name and `version`
+is its observed engine. Set `table_role` to `posts`, `postmeta`, `options` or
+`journal` only after independently identifying that table's role in the selected
+live WordPress installation. Each role can occur once. For example:
+`{"kind":"table_engine","name":"site_posts","version":"MyISAM","table_role":"posts"}`.
+Older exports without roles remain valid evidence but cannot satisfy this
+publisher prerequisite. A server default, suffix match or another installation's
+tables cannot fill missing identities. Roles are administrator assertions, not
+runtime certification.
+
 Within an Elementor `__dynamic__` binding dictionary, discovery also accepts the
 exact `post-title` and `post-url` tag forms with a seven-character lowercase hex ID
 and empty URL-encoded settings (`%7B%7D`, case-insensitive hex digits). It preserves
