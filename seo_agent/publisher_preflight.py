@@ -80,6 +80,8 @@ def inspect_inventory(data, *, phase="setup", authenticated=None):
     for row in (authenticated or {}).get("software", []):
         key = row["kind"], row["name"]
         label = f"Authenticated REST {row['kind']} {row['name']}"
+        if row.get("retained"):
+            label += " (previously observed; not cleared by a partial refresh)"
         if row["kind"] not in {"theme", "plugin"}:
             continue
         if row.get("active") is True and key not in pinned:
@@ -94,5 +96,6 @@ def inspect_inventory(data, *, phase="setup", authenticated=None):
                     conflicts.append(f"{label} {field} contradicts the administrator assertion; reconcile fresh evidence.")
     return {"adapter": ADAPTER, "phase": phase, "certainty": "administrator_asserted",
             "missing": list(dict.fromkeys(missing)), "conflicts": list(dict.fromkeys(conflicts)),
+            "authenticated_facts": (authenticated or {}).get("software", []),
             "publishing_compatible": False,
             "note": "Administrator inventory is asserted; separately labelled authenticated REST facts can reveal contradictions but never prove completeness. Fresh certified endpoint checks, host effects, staging validation and exact approvals remain required. Do not alter production to fit this certificate."}

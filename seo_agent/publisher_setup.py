@@ -38,7 +38,7 @@ def host_requirements(store, sid, cid):
             raise ValueError("Refresh the previously collected authenticated REST evidence before host review")
     else:
         auth = None
-    preflight = inspect_inventory(data, phase="installed", authenticated=auth["payload"]["body"]["data"] if auth else None)
+    preflight = inspect_inventory(data, phase="installed", authenticated=d.authenticated_inventory(store, sid, cid))
     if preflight["missing"] or preflight["conflicts"]:
         raise ValueError("Pinned Elementor inventory is incomplete or incompatible: " +
                          "; ".join(preflight["conflicts"] + preflight["missing"]))
@@ -60,6 +60,7 @@ def review_host(store, sid, cid, *, human_clicked, source, conditions):
         return d._save(store, sid, c, "publisher_host_review", {
             "evidence_id": admin["id"], "public_evidence_id": public["id"], "human_review_source": source,
             "authenticated_evidence_id": auth["id"] if auth else None,
+            "authenticated_fact_evidence_ids": d.authenticated_inventory(store, sid, cid)["evidence_ids"],
             "contract": CONTRACT, "conditions": list(HOST_CONDITIONS)},
             source="Independent human review of provider/CMS records", certainty="human_reviewed")
 
@@ -86,7 +87,9 @@ def evidence_binding(store, sid, *, url, instance, environment, adapter, discove
         if not review:
             raise ValueError("Review the pinned adapter's exact host effect conditions in Hosting & CMS")
         result.update(administrator_evidence_id=admin["id"], public_evidence_id=public["id"],
-                      authenticated_evidence_id=auth["id"] if auth else None, host_review_id=review["id"])
+                      authenticated_evidence_id=auth["id"] if auth else None,
+                      authenticated_fact_evidence_ids=d.authenticated_inventory(store, sid, discovery_id)["evidence_ids"],
+                      host_review_id=review["id"])
     return result
 
 

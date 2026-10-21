@@ -257,6 +257,11 @@ statuses do not prove inactivity or completeness. Host review binds the exact
 authenticated evidence record, including its absence. Addition, replacement or
 expiry invalidates that review; previously collected stale evidence must be
 refreshed before another review. Imported assertions never become confirmed facts.
+Known plugin/theme facts persist across partial refreshes, with their original
+evidence IDs and dates. Blank versions, omitted rows and unknown statuses cannot
+clear a known conflict; explicit newer facts are required. Retained observations
+are labelled historical, and their contributing evidence IDs are also bound to
+host review. They do not become fresh merely because another request succeeded.
 
 ```powershell
 $env:TEMP = Join-Path (Get-Location) '.tmp'

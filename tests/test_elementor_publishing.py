@@ -523,6 +523,35 @@ class HostingBindingTests(TrackingFixture, unittest.TestCase):
             review()
         with self.assertRaises(ValueError): setup.validate_binding(self.store, self.sid, destination)
 
+    def test_partial_refresh_retains_conflicts_until_explicit_reconciliation(self):
+        c, _, _ = self.elementor_host()
+        rows = [dict(kind="plugin", name="extra/cache.php", version="1", active=True),
+                dict(kind="plugin", name="elementor/elementor.php", version="unsupported", active=False)]
+        old_time = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        eid = d._save(self.store, self.sid, c, "authenticated", {"software": rows}, observed=old_time)
+        for partial in ([], [{**s, "version": "", "active": None} for s in rows],
+                        [{**rows[1], "version": ""}]):
+            d._save(self.store, self.sid, c, "authenticated", {"software": partial, "missing": ["Partial inventory"]})
+            with self.assertRaisesRegex(ValueError, "previously observed"):
+                setup.host_requirements(self.store, self.sid, self.cid)
+            report = d.compatibility(self.store, self.sid, self.cid)
+            for text in ("extra/cache.php", "unsupported"):
+                self.assertTrue(any(text in x for x in report["blockers"]))
+            facts = d.authenticated_inventory(self.store, self.sid, self.cid)
+            self.assertIn(eid, facts["evidence_ids"])
+            extra = next(s for s in facts["software"] if s["name"] == "extra/cache.php")
+            self.assertEqual(extra["fact_sources"]["active"]["observed_utc"], old_time)
+        # Only explicit newer values resolve each previously conflicting fact.
+        rows[0]["active"] = False
+        rows[1].update(active=True, version=ep.contract_manifest()["elementor"])
+        new = d._save(self.store, self.sid, c, "authenticated", {"software": rows})
+        setup.host_requirements(self.store, self.sid, self.cid)
+        setup.review_host(self.store, self.sid, self.cid, human_clicked=True,
+                          source="Synthetic independent review", conditions=list(setup.HOST_CONDITIONS))
+        binding = setup.evidence_binding(self.store, self.sid, url=c["url"], instance=c["installation_id"],
+                                        environment="staging", adapter=ep.ADAPTER, discovery_id=self.cid)
+        self.assertEqual(binding["authenticated_fact_evidence_ids"], [new])
+
 
 class ProtocolTests(unittest.TestCase):
     def test_distinct_client_route_and_no_ambient_auth(self):

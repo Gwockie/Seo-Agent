@@ -155,6 +155,8 @@ def status(store, sid, cid, row):
                 return "invalidated"
             if body["data"]["authenticated_evidence_id"] != (auth["id"] if auth else None):
                 return "invalidated"
+            if body["data"].get("authenticated_fact_evidence_ids") != authenticated_inventory(store, sid, cid)["evidence_ids"]:
+                return "invalidated"
         for kind, eid in deps.items():
             parent = latest(store, sid, cid, kind)
             if not parent or parent["id"] != eid:
@@ -165,6 +167,35 @@ def status(store, sid, cid, row):
 def latest(store, sid, cid, kind, *, current=True):
     row = next((r for r in records(store, sid, cid) if r["kind"] == kind), None)
     return row if row and (not current or status(store, sid, cid, row) == "current") else None
+
+
+def authenticated_inventory(store, sid, cid):
+    """Keep known REST facts when a later partial response omits them.
+
+    This is conflict evidence, never a complete or freshly verified inventory.
+    Only an explicit later field value replaces a known value in this scope.
+    """
+    expected = scope(store, sid, connection(store, sid, cid))
+    history = [r for r in records(store, sid, cid) if r["kind"] == "authenticated"
+               and r["payload"]["body"]["scope"] == expected and not r["payload"]["body"].get("history_only")]
+    facts = {}
+    for row in reversed(history):
+        body = row["payload"]["body"]
+        for item in body["data"].get("software", []):
+            if item["kind"] not in {"plugin", "theme"}:
+                continue
+            target = facts.setdefault((item["kind"], item["name"]),
+                                     dict(kind=item["kind"], name=item["name"], version="", active=None, fact_sources={}))
+            for field in ("version", "active"):
+                if (item.get(field) is not None if field == "active" else bool(item.get(field))):
+                    target[field] = item[field]
+                    target["fact_sources"][field] = dict(evidence_id=row["id"], observed_utc=body["observed_utc"])
+    for item in facts.values():
+        item["retained"] = any(s["evidence_id"] != history[0]["id"] or
+                               datetime.now(timezone.utc) - timestamp(s["observed_utc"]) > MAX_AGE
+                               for s in item["fact_sources"].values())
+    return {"software": list(facts.values()),
+            "evidence_ids": sorted({s["evidence_id"] for item in facts.values() for s in item["fact_sources"].values()})}
 
 
 def attempts(store, sid, cid):
@@ -382,7 +413,8 @@ def compatibility(store, sid, cid):
     missing += public.get("missing", []) + auth.get("missing", [])
     isolation = isolation_status(store, sid, cid, current)
     blocker = "Discovery alone does not certify a writable installation. A matching pinned publisher endpoint and fresh host/staging validation are required."
-    has_elementor = any("elementor" in s["name"].lower() for s in admin.get("software", []) + auth.get("software", [])) or any("elementor" in x["value"].lower() for x in public.get("clues", []))
+    auth_facts = authenticated_inventory(store, sid, cid)
+    has_elementor = any("elementor" in s["name"].lower() for s in admin.get("software", []) + auth_facts["software"]) or any("elementor" in x["value"].lower() for x in public.get("clues", []))
     blockers = [blocker]
     for s in auth.get("software", []) + admin.get("software", []):
         if not has_elementor and s["active"] is True and ((s["kind"] == "plugin" and s["name"] != "local-seo-publisher/local-seo-publisher.php")
@@ -393,7 +425,7 @@ def compatibility(store, sid, cid):
         blockers.append("Elementor mapping alone cannot enable publication. The separate pinned canvas-heading adapter requires matching fresh runtime and independently reviewed host/staging evidence; other stacks remain unsupported.")
     if not public:
         blockers.append("Refresh current public REST identities before cross-checking any imported page mapping.")
-    pinned = inspect_inventory(admin, authenticated=auth)
+    pinned = inspect_inventory(admin, authenticated=auth_facts)
     if has_elementor:
         blockers.extend(pinned["conflicts"])
     return {"schema_version": 1, "scope": scope(store, sid, c), "evaluated_utc": utc_now(),
