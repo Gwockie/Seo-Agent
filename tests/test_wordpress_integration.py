@@ -92,6 +92,10 @@ class WordPressIntegration(unittest.TestCase):
         with self.assertRaises(CMSFailure):
             self.client.request("POST", "?rest_route=/wp/v2/pages/3", {"title": "Not authorized"})
 
+    def test_nontransactional_tables_refuse_state_and_fresh_write_without_mutation(self):
+        from tests.transactional_fixture import reject_nontransactional_tables
+        reject_nontransactional_tables(self, CONTAINER)
+
     def fixture_php(self, code):
         bootstrap = "require '/var/www/html/wp-load.php'; if (LSEO_INSTANCE !== 'synthetic-local-wordpress' || wp_get_environment_type() !== 'local') { exit(2); } "
         subprocess.run(["docker", "exec", CONTAINER, "php", "-r", bootstrap + code], check=True, capture_output=True)

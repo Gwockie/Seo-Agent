@@ -115,6 +115,16 @@ keys `_elementor_data`, `_elementor_page_settings`, `_elementor_edit_mode`,
 IDs must come from administrator evidence; they cannot be inferred from HTML.
 Nested credential-bearing settings are rejected even inside JSON strings.
 
+For `table_engine` entries, `name` is the exact database table name and `version`
+is its observed engine. Set `table_role` to `posts`, `postmeta`, `options` or
+`journal` only after independently identifying that table's role in the selected
+live WordPress installation. Each role can occur once. For example:
+`{"kind":"table_engine","name":"site_posts","version":"MyISAM","table_role":"posts"}`.
+Older exports without roles remain valid evidence but cannot satisfy this
+publisher prerequisite. A server default, suffix match or another installation's
+tables cannot fill missing identities. Roles are administrator assertions, not
+runtime certification.
+
 Within an Elementor `__dynamic__` binding dictionary, discovery also accepts the
 exact `post-title` and `post-url` tag forms with a seven-character lowercase hex ID
 and empty URL-encoded settings (`%7B%7D`, case-insensitive hex digits). It preserves
@@ -239,6 +249,19 @@ No specific host/provider is assumed. Provider inventory and isolation remain
 administrator-sourced until an actual provider and authorized read route are known.
 
 ## Synthetic validation
+
+Elementor preflight also compares returned authenticated plugin/theme facts with
+the pinned certificate and administrator assertions. Contradictions block host
+review and destination binding. REST inventory is partial: missing rows or unknown
+statuses do not prove inactivity or completeness. Host review binds the exact
+authenticated evidence record, including its absence. Addition, replacement or
+expiry invalidates that review; previously collected stale evidence must be
+refreshed before another review. Imported assertions never become confirmed facts.
+Known plugin/theme facts persist across partial refreshes, with their original
+evidence IDs and dates. Blank versions, omitted rows and unknown statuses cannot
+clear a known conflict; explicit newer facts are required. Retained observations
+are labelled historical, and their contributing evidence IDs are also bound to
+host review. They do not become fresh merely because another request succeeded.
 
 ```powershell
 $env:TEMP = Join-Path (Get-Location) '.tmp'

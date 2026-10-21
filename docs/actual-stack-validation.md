@@ -82,3 +82,18 @@ known. Installation/activation, accounts/capabilities, deployment, publication a
 temporary host cleanup retain their separate exact-action approvals. See
 [website change policy](website-change-policy.md) and
 [Elementor publishing](elementor-publishing.md).
+
+The setup packet and readiness report retain known inventory conflicts as well as
+missing evidence. The pinned Elementor preflight compares explicit live table
+roles, engines, versions, hashes and active software. It distinguishes preparation
+before installation (the companion and journal may be absent) from host review
+after installation (both must be present). Complete category labels or a human
+checkbox cannot override incompatible or missing inventory rows.
+
+MyISAM cannot supply the existing contract's atomic content/mirror/journal
+transaction: [MySQL documents that nontransactional changes cannot be rolled back](https://dev.mysql.com/doc/refman/8.4/en/nontransactional-tables.html).
+The disposable Docker tests replace each required synthetic table's
+engine in turn and verify that both publishers reject state reads and fresh writes,
+preserve exact rows and timestamps, and retain read-only reconciliation of earlier
+success. This is rejection coverage, not a MyISAM publishing certificate. Keep the
+preserved site baseline separate and do not convert live tables to fit the tests.

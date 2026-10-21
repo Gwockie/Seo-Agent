@@ -109,6 +109,34 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(rows[0]["payload"]["body"]["scope"]["profile_hash"], config_hash(self.store.site(self.sid)))
         self.assertFalse(rows[0]["payload"]["compatibility_at_collection"]["publishing_compatible"])
 
+    def test_table_roles_are_explicit_and_cannot_alias_inventory(self):
+        value = self.bundle()
+        value["software"] = [dict(kind="table_engine", name="live_posts", version="MyISAM", table_role="posts")]
+        self.import_bundle(value)
+        self.assertTrue(d.compatibility(self.store, self.sid, self.cid)["elementor_preflight"]["conflicts"])
+        value["software"].append(dict(kind="table_engine", name="other_posts", version="InnoDB", table_role="posts"))
+        with self.assertRaises(ValueError):
+            self.import_bundle(value)
+        value["software"] = [dict(kind="plugin", name="synthetic/plugin.php", table_role="posts")]
+        with self.assertRaises(ValueError):
+            self.import_bundle(value)
+
+    def test_setup_and_readiness_keep_incompatibilities_and_discard_stale_assertions(self):
+        from seo_agent import publisher_setup as setup
+        from tests.test_publisher_preflight import certified_inventory
+        self.seed()
+        value = self.bundle()
+        value.update(certified_inventory())
+        next(s for s in value["software"] if s.get("table_role") == "posts")["version"] = "MyISAM"
+        self.import_bundle(value)
+        for report in (setup.setup_packet(self.store, self.sid, self.cid), setup.readiness(self.store, self.sid)):
+            self.assertTrue(any("MyISAM" in x for x in report["blockers"]))
+        value["collected_utc"] = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        self.import_bundle(value)
+        report = setup.setup_packet(self.store, self.sid, self.cid)
+        self.assertFalse(any("MyISAM" in x for x in report["blockers"]))
+        self.assertTrue(any("posts table" in x for x in report["blockers"]))
+
     def test_failure_preserves_success_and_age_without_exception_content(self):
         self.seed()
         before = d.records(self.store, self.sid, self.cid)
@@ -453,6 +481,13 @@ class ReaderLoopbackTests(unittest.TestCase):
         self.assertFalse(self.reader.session.trust_env)
         with self.assertRaises(ValueError):
             self.reader._get("?rest_route=/wp/v2/settings", authenticated=True)
+    def test_authenticated_unknown_status_is_not_reported_as_inactive(self):
+        plugins = [dict(plugin="synthetic/" + str(i), status=value, version="1")
+                   for i, value in enumerate(("active", "network-active", "inactive", "unknown", None))]
+        with patch.object(self.reader, "_get", side_effect=[plugins, []]):
+            auth = self.reader.authenticated([])
+        self.assertEqual([s["active"] for s in auth["software"]], [True, True, False, None, None])
+
     def test_redirect_not_followed_or_retried_and_budget_enforced(self):
         self.response_mode = "redirect"
         with self.assertRaises(ValueError) as error:

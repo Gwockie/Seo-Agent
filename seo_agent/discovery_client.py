@@ -185,7 +185,8 @@ class DiscoveryReader:
                 if not isinstance(data, list) or len(data) > 100:
                     raise ValueError()
                 software.extend(Software(kind=kind, name=v[key], version=v.get("version", ""),
-                                         active=v.get("status") in ("active", "network-active")).model_dump() for v in data)
+                                         active=True if v.get("status") in ("active", "network-active") else
+                                         False if v.get("status") == "inactive" else None).model_dump() for v in data)
                 # Core endpoints may paginate/filter; do not claim exhaustive inventory.
             except Exception:
                 missing.append(kind + " inventory unavailable with current permissions; use protected administrator export")

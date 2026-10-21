@@ -14,6 +14,7 @@ from . import discovery as d
 from .coordination import run_lock, workspace_lock
 from .storage import utc_now
 from .elementor_publishing import ADAPTER, CONTRACT, contract_manifest
+from .publisher_preflight import inspect_inventory
 
 HOST_CONDITIONS = (
     "No page cache, CDN HTML cache or persistent object cache; no hidden cache invalidation is needed.",
@@ -31,13 +32,23 @@ def host_requirements(store, sid, cid):
     data = admin["payload"]["body"]["data"]
     if set(data["complete_inventory"]) != {"core", "php", "database", "table_engine", "theme", "plugin", "mu_plugin", "dropin"}:
         raise ValueError("Complete versioned software, MU-plugin, drop-in and table-engine inventory is required")
+    auth = d.latest(store, sid, cid, "authenticated", current=False)
+    if auth and auth["payload"]["body"]["scope"] == d.scope(store, sid, c):
+        if d.status(store, sid, cid, auth) != "current":
+            raise ValueError("Refresh the previously collected authenticated REST evidence before host review")
+    else:
+        auth = None
+    preflight = inspect_inventory(data, phase="installed", authenticated=d.authenticated_inventory(store, sid, cid))
+    if preflight["missing"] or preflight["conflicts"]:
+        raise ValueError("Pinned Elementor inventory is incomplete or incompatible: " +
+                         "; ".join(preflight["conflicts"] + preflight["missing"]))
     facts = {h["area"]: h for h in data["host"]}
     for area in (*d.HOST_EFFECTS, "deployment", "no_sync", "no_jobs_webhooks", "no_customer_messages"):
         fact = facts.get(area)
         if (not fact or fact["result"] not in {"observed", "isolated"}
                 or len(fact["observation"].strip()) < 20 or len(fact["source_reference"].strip()) < 5):
             raise ValueError("Missing concrete host evidence for " + area)
-    return c, admin, public
+    return c, admin, public, auth
 
 
 def review_host(store, sid, cid, *, human_clicked, source, conditions):
@@ -45,9 +56,11 @@ def review_host(store, sid, cid, *, human_clicked, source, conditions):
     if human_clicked is not True or conditions != list(HOST_CONDITIONS) or not 10 <= len(source.strip()) <= 300:
         raise ValueError("Independent human review of every exact host effect condition and its source is required")
     with run_lock(workspace_lock(store.root)):
-        c, admin, public = host_requirements(store, sid, cid)
+        c, admin, public, auth = host_requirements(store, sid, cid)
         return d._save(store, sid, c, "publisher_host_review", {
             "evidence_id": admin["id"], "public_evidence_id": public["id"], "human_review_source": source,
+            "authenticated_evidence_id": auth["id"] if auth else None,
+            "authenticated_fact_evidence_ids": d.authenticated_inventory(store, sid, cid)["evidence_ids"],
             "contract": CONTRACT, "conditions": list(HOST_CONDITIONS)},
             source="Independent human review of provider/CMS records", certainty="human_reviewed")
 
@@ -69,11 +82,14 @@ def evidence_binding(store, sid, *, url, instance, environment, adapter, discove
         result["isolation"] = isolation
         result["isolation_review_id"] = d.latest(store, sid, discovery_id, "isolation_review")["id"]
     if adapter == ADAPTER:
-        _, admin, public = host_requirements(store, sid, discovery_id)
+        _, admin, public, auth = host_requirements(store, sid, discovery_id)
         review = d.latest(store, sid, discovery_id, "publisher_host_review")
         if not review:
             raise ValueError("Review the pinned adapter's exact host effect conditions in Hosting & CMS")
-        result.update(administrator_evidence_id=admin["id"], public_evidence_id=public["id"], host_review_id=review["id"])
+        result.update(administrator_evidence_id=admin["id"], public_evidence_id=public["id"],
+                      authenticated_evidence_id=auth["id"] if auth else None,
+                      authenticated_fact_evidence_ids=d.authenticated_inventory(store, sid, discovery_id)["evidence_ids"],
+                      host_review_id=review["id"])
     return result
 
 
@@ -218,6 +234,7 @@ def setup_packet(store, sid, cid=None):
     base = Path(__file__).resolve().parent.parent / "wordpress/local-seo-publisher"
     files = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(base.iterdir()) if p.is_file()}
     c = d.connection(store, sid, cid) if cid else None
+    report = d.compatibility(store, sid, cid) if c else None
     return {"schema": "publisher-setup/1", "history_only": True, "site_id": sid, "created_utc": utc_now(),
         "destination": c["url"] if c else store.site(sid).url, "environment": c["environment"] if c else "production",
         "provider": c["provider"] if c else "Unknown", "installation_id": c["installation_id"] if c else "Unknown",
@@ -230,7 +247,10 @@ def setup_packet(store, sid, cid=None):
                     "No whole-site deployment, staging database copy, DNS change or content publication is included."],
         "validation": "Verify backups, package hashes, exact allowlists, stock pinned runtime, minimal-account denial of core REST writes and read-only adapter checks; then separately validate isolated staging.",
         "recovery": "Before setup capture protected database/files/configuration baseline. On failure deactivate/remove only these new files, restore the prior constants and revoke only the new credential/account/role if unused. Retain the operation journal for reconciliation; never drop it to enable retries.",
-        "blockers": ["Provider/account and installation evidence required"] if not c else d.compatibility(store, sid, cid)["missing"],
+        "blockers": ["Provider/account and installation evidence required"] if not report else list(dict.fromkeys(
+            report["missing"] + report["blockers"] + report["elementor_preflight"]["missing"] +
+            report["elementor_preflight"]["conflicts"])),
+        "inventory_preflight": report["elementor_preflight"] if report else None,
         "approval": "This is a review packet, not permission. No setup execution is provided by the app."}
 
 
@@ -244,7 +264,10 @@ def readiness(store, sid):
         result["blockers"].append("No hosting provider/account, installation inventory or isolated staging evidence is configured.")
     for c in connections:
         if c["enabled"]:
-            result["blockers"].extend(c["label"] + ": " + item for item in d.compatibility(store, sid, c["id"])["missing"])
+            report = d.compatibility(store, sid, c["id"])
+            result["blockers"].extend(c["label"] + ": " + item for item in dict.fromkeys(
+                report["missing"] + report["blockers"] +
+                (report["elementor_preflight"]["missing"] if report["elementor_detected"] else [])))
     result["mapped"] = any(d.latest(store, sid, c["id"], "mapping") for c in connections)
     reviews = p.rows(store, sid, "cms_reviews")
     for row in reviews:
