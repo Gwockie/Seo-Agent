@@ -33,6 +33,23 @@ is not silently substituted for an explicit heading level. Do not convert a dyna
 title or choose a different heading to make a saved action pass. Revise the
 authoritative proposal using fresh evidence when its current text/target differs.
 
+Elementor describes [Post Title as the current post's title](https://elementor.com/help/dynamic-tags-pro-2/).
+For an exact empty-settings dynamic `post-title` binding, a blocked result can
+also explain the dependency. It first cross-checks the selected rendered heading
+against the saved action's structural target. It retains the raw metadata and
+binding hashes/path, asserted row ID and capture hash. The result
+inherits the action, evidence, environment and freshness bindings above.
+
+Discovery captures omit link labels and document titles. Their other title
+references are explicitly unavailable, never counted as zero. This is a dependency
+diagnosis, not a tested effect inventory.
+Changing a source title can affect navigation, other widgets and document titles;
+the full scope still needs independent evidence. The diagnostic does not assert
+the stored post title, create replacement JSON, revise the action, validate staging
+or enable publishing. Unknown/configurable tags and ambiguous rendered targets do
+not receive this specific diagnosis. Static and dynamic publisher restrictions are
+unchanged.
+
 ## What each result proves
 
 | Result | Evidence | Remaining boundary |

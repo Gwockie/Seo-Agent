@@ -9,6 +9,7 @@ from streamlit.testing.v1 import AppTest
 from seo_agent import discovery as d, elementor_candidates as c, publishing as p, tracking as t, page_tracking as pt
 from seo_agent.backup import _backup, _restore
 from seo_agent.elementor import map_heading
+from seo_agent.discovery_client import DiscoveryReader
 from seo_agent.previews import save_preview
 from seo_agent.storage import utc_now
 from tests.test_tracking import TrackingFixture
@@ -99,6 +100,93 @@ class CandidateTests(TrackingFixture, unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"ancestor"):
             c.inspect_heading(json.dumps(data),3,"heading1")
         self.assertIsNone(self.prepare("heading2")["payload"]["body"]["data"]["candidate"])
+
+    def dynamic_title(self):
+        raw = json.loads(RAW)
+        raw[0]["elements"][0]["settings"].update(title="", __dynamic__={"title": DYNAMIC})
+        self.admin["pages"][0]["metadata"][0]["value"] = json.dumps(raw)
+        self.seed()
+
+    def test_dynamic_diagnosis_is_bound_to_action_and_never_grants_authority(self):
+        self.dynamic_title()
+        row = self.prepare()
+        result = row["payload"]["body"]["data"]
+        diagnosis = result["dependency_diagnostic"]
+        self.assertEqual(diagnosis["kind"], "dynamic_post_title")
+        self.assertEqual(diagnosis["binding_path"], [0, "elements", 0, "settings", "__dynamic__", "title"])
+        self.assertEqual(diagnosis["metadata_row_id"], 42)
+        self.assertTrue(diagnosis["rendered_action_target_cross_checked"])
+        self.assertFalse(diagnosis["effect_scope_complete"])
+        self.assertEqual(result["level"], "blocked")
+        self.assertIsNone(result["candidate"])
+        for flag in ("publishing_compatible", "staging_validated", "production_ready"):
+            self.assertIs(result[flag], False)
+        self.assertEqual(t.action(self.store, self.sid, self.action["action_id"], 1), self.action)
+        self.assertEqual(t.rows(self.store, "human_approvals", self.sid), [])
+        for table in ("cms_reviews", "cms_authorizations", "cms_attempts"):
+            self.assertEqual(p.rows(self.store, self.sid, table), [])
+        with self.assertRaises(ValueError):
+            map_heading(self.admin["pages"][0]["metadata"][0]["value"], page_id=3, element_id="heading1")
+        self.seed()
+        self.assertEqual(d.status(self.store, self.sid, self.cid, row), "invalidated")
+
+    def test_dynamic_diagnosis_keeps_reference_counts_unknown_through_real_reader(self):
+        url = self.value["url"]
+        links = (f'<section data-elementor-id="8" data-elementor-type="footer">'
+                 f'<a href="{url}">Our service</a><a href="">Our service</a>'
+                 f'<a href="{url}?different=1">Our service</a><a href="{url}">Other label</a></section>')
+        html = HTML.replace('</h2>', '</h2>' + links).replace('<body>', '<head><title>Our service | Example</title></head><body>')
+        connection = d.connection(self.store, self.sid, self.cid)
+        reader = DiscoveryReader(connection)
+        try:
+            with patch.object(reader, "_get", side_effect=["<html></html>",
+                    dict(id=3, link=url, status="publish", type="page", template="elementor_header_footer"), html]):
+                self.public = reader.public([3])
+        finally:
+            reader.close()
+        capture = self.public["captures"][0]
+        self.assertNotIn('href=', capture["html"])
+        self.assertNotIn('Our service | Example', capture["html"])
+        self.dynamic_title()
+        diagnosis = self.prepare()["payload"]["body"]["data"]["dependency_diagnostic"]
+        observed = diagnosis["capture"]
+        self.assertEqual(diagnosis["other_title_references"], "unavailable_from_discovery_capture")
+        self.assertNotIn("same_title_links_to_page", observed)
+        self.assertEqual(observed["html_sha256"], c._sha(capture["html"]))
+        self.assertIn("do not prove", diagnosis["limits"])
+
+    def test_unbound_dynamic_headings_do_not_receive_specific_diagnosis(self):
+        self.dynamic_title()
+        for html in (HTML.replace('data-elementor-id="3"', 'data-elementor-id="9"'),
+                     HTML + HTML, HTML.replace('Our service', 'Different title'),
+                     HTML.replace('<h1>', '<h1><em>').replace('</h1>', '</em></h1>')):
+            self.public["captures"][0]["html"] = html
+            self.seed()
+            result = self.prepare()["payload"]["body"]["data"]
+            self.assertIsNone(result["candidate"])
+            self.assertNotIn("dependency_diagnostic", result)
+        # A unique equal-text widget elsewhere is still not the saved action target.
+        self.public["captures"][0]["html"] = HTML.replace('Dynamic post title', 'Our service').replace('<h2>', '<h1>').replace('</h2>', '</h1>')
+        raw = json.loads(self.admin["pages"][0]["metadata"][0]["value"])
+        raw[0]["elements"][1]["settings"]["header_size"] = "h1"
+        self.admin["pages"][0]["metadata"][0]["value"] = json.dumps(raw)
+        self.seed()
+        self.assertNotIn("dependency_diagnostic", self.prepare("heading2")["payload"]["body"]["data"])
+
+    def test_diagnosis_rejects_ambiguous_document_and_nonexact_dynamic_tags(self):
+        target = c.context_binding(self.store, self.sid, self.action)["target"]
+        for tag in (DYNAMIC.replace('post-title', 'post-url'), DYNAMIC + ' ',
+                    DYNAMIC.replace('%7B%7D', '%257B%257D'), DYNAMIC.replace('%7B%7D', '%7B%22key%22%3A1%7D')):
+            raw = json.loads(RAW)
+            raw[0]["elements"][0]["settings"].update(title="", __dynamic__={"title": tag})
+            self.assertIsNone(c.post_title_diagnostic(json.dumps(raw), 3, "heading1", "Our service", target,
+                                                     self.public["captures"][0], 42))
+        self.dynamic_title()
+        raw = json.loads(self.admin["pages"][0]["metadata"][0]["value"])
+        raw[0]["elements"].append(copy.deepcopy(raw[0]["elements"][0]))
+        with self.assertRaises(ValueError):
+            c.post_title_diagnostic(json.dumps(raw), 3, "heading1", "Our service", target,
+                                    self.public["captures"][0], 42)
 
     def test_wrong_identity_render_target_and_url_block(self):
         original=copy.deepcopy(self.public)
@@ -197,6 +285,17 @@ class CandidateTests(TrackingFixture, unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertTrue(any("candidate_prepared" in x.value for x in app.text))
         self.assertEqual(p.rows(self.store,self.sid,"cms_authorizations"),[])
+
+    def test_ui_explains_dynamic_title_and_keeps_result_blocked(self):
+        self.dynamic_title()
+        self.prepare()
+        app = AppTest.from_function(discovery_app, args=(str(self.store.root), self.sid), default_timeout=30).run()
+        next(x for x in app.selectbox if x.label == "Discovery environment").set_value(self.cid).run()
+        self.assertFalse(app.exception)
+        self.assertTrue(any("dynamic post-title binding" in x.value for x in app.warning))
+        self.assertTrue(any("blocked" in x.value for x in app.text))
+        self.assertTrue(any("do not prove" in x.value for x in app.caption))
+        self.assertEqual(p.rows(self.store, self.sid, "cms_authorizations"), [])
 
     def test_duplicate_invalid_json_and_secret_fields_remain_rejected(self):
         for raw in ('[{"id":"a","id":"b"}]','[NaN]',"["*80+"0"+"]"*80):
