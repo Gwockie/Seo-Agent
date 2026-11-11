@@ -100,6 +100,31 @@ temporary host cleanup retain their separate exact-action approvals. See
 [website change policy](website-change-policy.md) and
 [Elementor publishing](elementor-publishing.md).
 
+For an already downloaded, separately approved source collection,
+`seo_agent.source_manifest.manifest_archive` creates an inert file manifest from
+an exact retained archive SHA256, one wrapper directory, and explicit relative
+directory/file allowlists. It checks the ZIP directory bounds before loading the
+entry list, checks the complete indexed local-record layout, rejects path aliases,
+unexpected files, links, special files, encryption, unsupported layouts and
+expansion limits, and verifies each file's length/CRC/SHA256 and complete compressed
+payload. Path depth and derived tree size have separate limits. It rereads the
+archive hash before returning. No files are
+extracted or executed, and the function makes no network or app-record writes.
+
+Every approved source item must be present. Recursive code roots include packaged
+descendants such as vendor test files and packaged `.htaccess`; a collector must
+not promise descendant exclusions that a whole-folder copy cannot enforce.
+Callers must keep archives/manifests protected, screen source for sensitive data,
+retain collection provenance and approvals, and independently verify live identity,
+freshness and isolation before any execution. A manifest's canonical tree digest
+supports byte comparison; it is not a publisher source certificate, complete
+activation inventory or proof that the source contains no credentials. ZIP64 and
+multipart archives are unsupported; do not silently loosen bounds to accept them.
+The default path policy rejects case/Unicode aliases for portable storage. An
+explicit `path_semantics="posix"` preserves case-distinct Linux source paths in
+the inert manifest, with that policy bound into its tree digest. Such a manifest
+does not establish that extraction onto Windows would preserve those files.
+
 The setup packet and readiness report retain known inventory conflicts as well as
 missing evidence. The pinned Elementor preflight compares explicit live table
 roles, engines, versions, hashes and active software. It distinguishes preparation
