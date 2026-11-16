@@ -72,6 +72,13 @@ class Evidence(StrictModel):
     node_id: str | None = Field(max_length=80)
 
 
+class ManualPostTitle(StrictModel):
+    page_id: int = Field(gt=0, le=2**53 - 1)
+    widget_id: str = Field(pattern=r"^[a-f0-9]{7}$")
+    source: str = Field(min_length=1, max_length=2000)
+    shared_effects: str = Field(min_length=1, max_length=4000)
+
+
 class Action(StrictModel):
     action_id: str = Field(pattern=ID_PATTERN)
     url: str = Field(max_length=2048)
@@ -91,6 +98,7 @@ class Action(StrictModel):
     recommendation_id: str | None = Field(default=None, pattern=ID_PATTERN)
     revision_note: str = Field(default="", max_length=4000)
     restored_from: int | None = Field(default=None, ge=1, le=100)
+    manual_post_title: ManualPostTitle | None = None
 
 
 class Handoff(StrictModel):
@@ -116,6 +124,12 @@ def validate_action(store, sid, aid, raw):
             raise ValueError("Action descriptions cannot be blank")
     if a["current"] == a["proposed"]:
         raise ValueError("Action does not change a value")
+    if mapping := a.get("manual_post_title"):
+        from .elementor_publishing import plain
+        if a["action_kind"] != "text" or not mapping["source"].strip() or not mapping["shared_effects"].strip():
+            raise ValueError("A dynamic heading requires reviewed CMS evidence and the exact shared effect scope")
+        plain(a["current"])
+        plain(a["proposed"])
     if a["capture_time_utc"]:
         a["capture_time_utc"] = timestamp(a["capture_time_utc"])
     for c in a["confirmations"]:
@@ -302,6 +316,8 @@ def freeze_batch(store, sid, selected):
         frozen.append({"action_id": identity, "revision": revision, "audit_id": r["audit_id"], "snapshot_id": ready["snapshot_id"], "action": a,
                        "assessment_context": context_binding(store, sid, r),
                        **({"target": ready["target"]} if ready["target"] is not None else {})})
+    if len(frozen) != 1 and any(f["action"].get("manual_post_title") for f in frozen):
+        raise ValueError("Freeze the manual page title on its own so related edits receive separate review")
     payload = {"actions": frozen, "fingerprint": digest(frozen)}
     bid = new_id()
     with store.db() as db:
@@ -338,7 +354,14 @@ def batch_validity(store, sid, bid):
         # action survives a capture refresh only while its frozen value/target,
         # evidence/configuration and mandatory factual/technical checks still hold.
         ready = readiness(store, sid, r, target=a.get("target"), check_assessment=not approvals)
-        if r["revision"] != a["revision"] or context_changed or not ready["ready"] or invalidated or changed_failure:
+        scope_changed = False
+        if a["action"].get("manual_post_title") and ready["ready"] and ready["snapshot_id"] != a["snapshot_id"]:
+            from .page_tracking import title_surfaces
+            snapshots = {s["id"]: s["payload"]["values"] for s in rows(store, "public_snapshots", sid) if s["status"] == "complete"}
+            url = a["action"]["url"]
+            scope_changed = (a["snapshot_id"] not in snapshots or ready["snapshot_id"] not in snapshots
+                             or title_surfaces(snapshots[a["snapshot_id"]], url) != title_surfaces(snapshots[ready["snapshot_id"]], url))
+        if r["revision"] != a["revision"] or context_changed or not ready["ready"] or invalidated or changed_failure or scope_changed:
             invalid.append(a["action_id"])
     return invalid
 
@@ -372,7 +395,7 @@ class Receipt(StrictModel):
     revision: int = Field(ge=1, le=100)
     attempt_id: str = Field(pattern=ID_PATTERN)
     environment: Literal["local", "staging", "production"]
-    outcome: Literal["attempted", "reported_applied", "failed", "partial", "rolled_back", "verification", "correction"]
+    outcome: Literal["attempted", "reported_applied", "failed", "partial", "rolled_back", "verification", "correction", "manual_reconciliation"]
     occurred_utc: str
     current: str | None = Field(max_length=8000)
     proposed: str = Field(max_length=8000)
@@ -384,7 +407,40 @@ class Receipt(StrictModel):
     corrects: str | None = Field(pattern=ID_PATTERN)
 
 
-def record_receipt(store, sid, raw):
+def unreconciled_title_attempt(db, sid, page_id, url):
+    receipts = db.execute("""
+        SELECT i.payload FROM implementation_receipts AS i
+        JOIN tracking_actions AS a
+          ON a.site_id = i.site_id AND a.action_id = i.action_id AND a.revision = i.revision
+        WHERE i.site_id = ? AND json_extract(i.payload, '$.environment') = 'production'
+          AND json_type(a.payload, '$.manual_post_title') = 'object'
+          AND (json_extract(a.payload, '$.manual_post_title.page_id') = ? OR json_extract(a.payload, '$.url') = ?)
+        ORDER BY i.rowid
+    """, (sid, page_id, url))
+    attempts = {}
+    for row in receipts:
+        event = json.loads(row[0])
+        attempts[event["attempt_id"]] = event["outcome"]
+    return any(outcome not in {"verification", "manual_reconciliation"} for outcome in attempts.values())
+
+
+def _unreconciled_automated_attempt(db, sid, page_id, url):
+    events = db.execute("""
+        SELECT (SELECT e.payload FROM cms_events AS e
+                WHERE e.site_id = i.site_id AND e.attempt_id = i.id ORDER BY e.rowid DESC LIMIT 1)
+        FROM cms_attempts AS i
+        JOIN cms_reviews AS r ON r.site_id = i.site_id AND r.id = i.review_id
+        WHERE i.site_id = ? AND json_extract(r.payload, '$.destination.environment') = 'production'
+          AND (json_extract(i.payload, '$.object_id') = ? OR json_extract(i.payload, '$.request.url') = ?)
+    """, (sid, page_id, url))
+    for row in events:
+        event = json.loads(row[0]) if row[0] else {}
+        if event.get("write", "uncertain") == "uncertain":
+            return True
+    return False
+
+
+def record_receipt(store, sid, raw, *, manual_operator=False):
     store.require_private_write()
     r = Receipt.model_validate(load_document(raw) if isinstance(raw, bytes) else raw).model_dump(by_alias=True)
     if r["site_id"] != sid:
@@ -453,6 +509,15 @@ def record_receipt(store, sid, raw):
             if any(v["outcome"] == "attempted" for v in attempts.values()):
                 raise ValueError("Close the previous attempt with an outcome before starting another")
             if r["environment"] == "production":
+                if mapping := a["payload"].get("manual_post_title"):
+                    if manual_operator is not True:
+                        raise ValueError("Start a manual title attempt using the app's explicit CMS preflight")
+                    if unreconciled_title_attempt(db, sid, mapping["page_id"], a["payload"]["url"]):
+                        raise ValueError("Reconcile the earlier manual attempt for this WordPress page before starting another")
+                    if _unreconciled_automated_attempt(db, sid, mapping["page_id"], a["payload"]["url"]):
+                        raise ValueError("Reconcile the earlier automated attempt for this WordPress page before starting a manual update")
+                    if any(v["environment"] == "production" for v in all_receipts):
+                        raise ValueError("This manual revision already has a production attempt; use a new reviewed revision")
                 if any(v["outcome"] == "reported_applied" and v["approval_id"] == r["approval_id"] for v in scoped_receipts):
                     raise ValueError("Applied publication cannot be attempted again under the same approval")
                 approval = db.execute("SELECT * FROM human_approvals WHERE id=? AND site_id=?", (r["approval_id"], sid)).fetchone()
@@ -472,12 +537,22 @@ def record_receipt(store, sid, raw):
         elif r["outcome"] == "verification":
             if prior[-1]["outcome"] == "attempted" or r["corrects"]:
                 raise ValueError("Verification follows an outcome")
+            if r["environment"] == "production" and a["payload"].get("manual_post_title"):
+                reported = next((v for v in prior if v["outcome"] == "reported_applied"), None)
+                if (not r["verification_snapshot_id"] or not reported or snapshot["checked"] <= reported["occurred_utc"]
+                        or any(v["outcome"] in {"correction", "rolled_back", "manual_reconciliation"} for v in prior)):
+                    raise ValueError("Manual verification requires independent public evidence after the reported publication time")
+        elif r["outcome"] == "manual_reconciliation":
+            if (manual_operator is not True or r["environment"] != "production" or not a["payload"].get("manual_post_title")
+                    or prior[-1]["outcome"] in {"attempted", "manual_reconciliation"}
+                    or r["actual"] is None or r["corrects"]):
+                raise ValueError("Manual reconciliation requires a prior result and current read-only title evidence")
         elif r["outcome"] == "correction":
             if not r["corrects"] or not any(v["receipt_id"] == r["corrects"] and v["outcome"] != "attempted" for v in prior):
                 raise ValueError("Correction must reference an outcome in this exact attempt")
         db.execute("INSERT INTO implementation_receipts VALUES (?,?,?,?,?,?)", (r["receipt_id"], sid, r["action_id"], r["revision"], utc_now(), canonical(r)))
-        if r["environment"] == "production" and r["outcome"] in {"partial", "correction", "rolled_back"}:
-            db.execute("INSERT INTO approval_invalidations VALUES (?,?,?,?,?,?,?)", (new_id(), sid, r["approval_id"], r["action_id"], r["revision"], utc_now(), canonical({"reason": "Reported partial work, correction or rollback requires renewed exact review before another attempt", "receipt_id": r["receipt_id"]})))
+        if r["environment"] == "production" and r["outcome"] in {"partial", "correction", "rolled_back", "manual_reconciliation"}:
+            db.execute("INSERT INTO approval_invalidations VALUES (?,?,?,?,?,?,?)", (new_id(), sid, r["approval_id"], r["action_id"], r["revision"], utc_now(), canonical({"reason": "Reported partial work, correction, rollback or reconciliation requires renewed exact review before another attempt", "receipt_id": r["receipt_id"]})))
     return r["receipt_id"]
 
 

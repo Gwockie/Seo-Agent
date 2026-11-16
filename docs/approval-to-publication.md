@@ -65,7 +65,7 @@ the core adapter; public widget mapping does not establish compatibility.
    production editor/autosave/publish effects; additional pages/settings require
    their own exact approval. For the narrow supported WordPress combination, use
    the app's CMS review and Apply controls described in the publishing guide.
-   Unsupported editors/fields remain unavailable; do not guess a mapping.
+   For a dynamic Elementor Post Title heading, use the manual procedure below.
 
 7. **Verify and record honestly.** Inspect the public rendered field and its exact
    location, relevant navigation/layout and canonical/index directives. Save a
@@ -92,3 +92,55 @@ scopes on the audit connection. No such write is part of this pipeline.
 
 See [website-change policy](website-change-policy.md) and
 [current tracking contracts](automatic-change-tracking.md) for the binding details.
+
+## Manual WordPress page title update
+
+Use this option for a saved whole-heading proposal whose Elementor widget takes
+its text directly from the WordPress page Title. In **Edit / Revise proposal**,
+select **Manual WordPress page title update**, enter the page and widget IDs, and
+reference current read-only CMS evidence for the raw Title and dynamic binding.
+Describe each known title-dependent surface, its affected URL and expected change,
+including navigation, other widgets and the document title. Resolve unknown
+effects before approval. Public HTML can tie the saved heading to the widget but
+cannot establish the raw Title, the binding or the complete effect scope.
+
+Save and review the revision, resolve its factual confirmations, and refresh the
+public baseline. Freeze this action by itself. The frozen review shows the exact
+production Title change, the widget, the mapping evidence, the shared effects,
+and the inverse candidate. Human approval explicitly covers opening the specified
+production editor, its autosaves and updating the single Title field. Obtain
+separate authorization for CMS access.
+
+Before opening the editor, recheck the live CMS baseline and effect scope using
+authorized read-only evidence, preserve the existing revision reference, and
+select **Record start of manual attempt** in the app. Follow the steps for that page,
+enter the actual outcome time in UTC and save the operator report. Record partial
+or uncertain outcomes as such. The app blocks another manual attempt for the
+same page across action IDs and revisions until the earlier attempt has public
+heading verification or a recorded operator reconciliation. Use **Record
+operator reconciliation** after checking the raw CMS Title and shared effects
+with read-only access. Imported receipts cannot start a manual title attempt
+or substitute for the app's reconciliation controls. An unresolved automated
+production attempt blocks a manual start on the same page, and an unresolved
+manual attempt blocks an automated write there.
+An automated attempt with an uncertain write outcome in restored history
+requires separate recovery against the matching installation. Restoring the
+workspace does not clear uncertainty or renew write authorization.
+
+Use **Refresh tracked pages** after publication. If needed, add the exact URL in
+**Tracked pages and check settings**. A successful later capture showing the
+exact proposed heading at the frozen structural target and widget can be recorded
+with **Record independent public heading verification**. Compare the document
+title, links to this URL and index directives with the frozen baseline. The
+verification covers the observed public heading. Check the remaining shared
+surfaces, raw CMS state and cache behavior using separately authorized access.
+The journal stores the operator report and observation separately.
+Record an operator reconciliation if the raw Title or other observed effects
+conflict with a matching public heading. Both observations remain in the journal.
+
+For rollback, confirm the current raw Title, revision and affected surfaces,
+prepare an exact inverse review with the current Title and original Title, and
+obtain new human approval before opening the editor. To track the inverse in the
+app, save it as a new proposal grounded in a fresh heading preview that shows the
+current Title. Recheck the same public surfaces afterward. Partial or uncertain
+results require their actual state before the inverse can be specified.

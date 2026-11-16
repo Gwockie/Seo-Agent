@@ -127,7 +127,7 @@ def mandatory_blockers(store, sid, record):
 
 def revise(store, sid, record, changes, *, note="", restored_from=None, owner_confirmed=False, confirmation_source=""):
     """Proposal-only editor. Observations and evidence cannot be changed here."""
-    allowed = {"proposed", "rationale", "expected_effect", "measurement", "primary_measure", "validation", "rollback", "confirmations"}
+    allowed = {"proposed", "rationale", "expected_effect", "measurement", "primary_measure", "validation", "rollback", "confirmations", "manual_post_title"}
     if set(changes) - allowed:
         raise ValueError("Proposal edits cannot change observed values, identity or evidence")
     latest = next(r for r in t.actions(store, sid) if r["action_id"] == record["action_id"])
@@ -135,7 +135,8 @@ def revise(store, sid, record, changes, *, note="", restored_from=None, owner_co
         raise ValueError("Open the latest revision before saving")
     a = {**record["payload"], **changes, "revision_note": note, "restored_from": restored_from}
     # All assertions in changed wording need fresh human confirmation, not a model/import.
-    changed = a["proposed"] != record["payload"]["proposed"]
+    changed = (a["proposed"] != record["payload"]["proposed"]
+               or a.get("manual_post_title") != record["payload"].get("manual_post_title"))
     existing = {c["item"]: c for c in record["payload"]["confirmations"]}
     items = set(existing) | {c["item"] for c in a["confirmations"]} | set(required_questions(store, sid, {**record, "payload": a}))
     a["confirmations"] = []
@@ -152,7 +153,10 @@ def revise(store, sid, record, changes, *, note="", restored_from=None, owner_co
 def restore(store, sid, record, revision):
     older = t.action(store, sid, record["action_id"], revision)
     fields = ("proposed", "rationale", "expected_effect", "measurement", "primary_measure", "validation", "rollback", "confirmations")
-    revise(store, sid, record, {k: older["payload"][k] for k in fields}, note=f"Restored proposal from revision {revision}", restored_from=revision)
+    changes = {k: older["payload"][k] for k in fields}
+    if record["payload"].get("manual_post_title") != older["payload"].get("manual_post_title"):
+        changes["manual_post_title"] = older["payload"].get("manual_post_title")
+    revise(store, sid, record, changes, note=f"Restored proposal from revision {revision}", restored_from=revision)
 
 
 def from_finding(store, sid, aid, rid, kind):
