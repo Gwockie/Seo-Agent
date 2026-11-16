@@ -123,6 +123,9 @@ with read-only access. Imported receipts cannot start a manual title attempt
 or substitute for the app's reconciliation controls. An unresolved automated
 production attempt blocks a manual start on the same page, and an unresolved
 manual attempt blocks an automated write there.
+An automated attempt with an uncertain write outcome in restored history
+requires separate recovery against the matching installation. Restoring the
+workspace does not clear uncertainty or renew write authorization.
 
 Use **Refresh tracked pages** after publication. If needed, add the exact URL in
 **Tracked pages and check settings**. A successful later capture showing the

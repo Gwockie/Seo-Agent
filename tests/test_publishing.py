@@ -131,6 +131,26 @@ class PublishingTests(TrackingFixture, unittest.TestCase):
             p.resume(self.store, self.sid, attempt["id"], human_clicked=True, client_factory=self.factory)
         self.assertEqual(self.client.writes, [])
 
+    def test_verified_automated_inverse_does_not_strand_a_manual_update(self):
+        rid = self.ready(rollback=True)
+        bid = self.manual_batch_for_same_page()
+        original_write = self.client.write
+
+        def write_with_render_failure(page, body):
+            result = original_write(page, body)
+            self.client.bad_render = True
+            return result
+
+        self.client.write = write_with_render_failure
+        attempt = self.apply(rid)[0]
+        event = p.latest_event(self.store, self.sid, attempt["id"])
+        self.assertEqual((event["write"], event["verification"]), ("succeeded", "failed"))
+        self.client.write = original_write
+        self.client.bad_render = False
+        rollback = next(a for a in self.apply(rid, direction="rollback") if a["direction"] == "rollback")
+        self.assertEqual(p.latest_event(self.store, self.sid, rollback["id"])["verification"], "passed")
+        manual.begin(self.store, self.sid, bid, preflight_confirmed=True, source="Synthetic preflight")
+
     def test_success_duplicate_click_and_receipt(self):
         rid = self.ready()
         attempts = self.apply(rid)

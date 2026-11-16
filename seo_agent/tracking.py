@@ -435,7 +435,7 @@ def _unreconciled_automated_attempt(db, sid, page_id, url):
     """, (sid, page_id, url))
     for row in events:
         event = json.loads(row[0]) if row[0] else {}
-        if event.get("write") != "not_sent" and event.get("verification") != "passed":
+        if event.get("write", "uncertain") == "uncertain":
             return True
     return False
 
