@@ -52,3 +52,17 @@ class PostTitleEffectsTests(unittest.TestCase):
             self.verify(before, after)
         with self.assertRaisesRegex(ValueError, "text"):
             self.verify(effects=(TitleEffect("head > title"), *self.effects[1:]))
+
+    def test_selector_cannot_switch_elements_and_hide_an_attribute_change(self):
+        before = (b'<html><head><title>Example</title></head><body><main data-state="Original Service">'
+                  b'<h1>Original&#32;Service</h1><h2>New Service</h2></main></body></html>')
+        after = before.replace(b'data-state="Original Service"', b'data-state="New Service"')
+        effect = TitleEffect('main[data-state="Original Service"] h1, main[data-state="New Service"] h2')
+        with self.assertRaisesRegex(ValueError, "different elements"):
+            self.verify(before, after, effects=(effect,))
+
+    def test_entity_cannot_hide_a_substitution_in_the_title_affix(self):
+        before = b'<html><head><title>Example</title></head><body><h1>A&#65;</h1></body></html>'
+        after = before.replace(b'>A&#65;', b'>AA&#65;')
+        with self.assertRaisesRegex(ValueError, "outside the declared text"):
+            verify_title_effects(before, after, current="A", proposed="AA", effects=(TitleEffect("h1", prefix="A"),))
