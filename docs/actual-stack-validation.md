@@ -50,6 +50,27 @@ or enable publishing. Unknown/configurable tags and ambiguous rendered targets d
 not receive this specific diagnosis. Static and dynamic publisher restrictions are
 unchanged.
 
+### Verifying title effects on isolated captures
+
+`seo_agent.post_title_effects.verify_title_effects` compares two deterministic UTF-8
+HTML captures of the same page. Give it the exact old and new literal titles and
+an explicit list of `TitleEffect` rules for that page. Each rule specifies a CSS
+selector, the expected number of matches and any fixed text before or after the
+title. Use reviewed selectors that identify the actual widget or menu item and
+link destination. Distinguish repeated navigation instances from distinct effects.
+
+The comparison requires a whole text element at every declared location and
+rejects an unlisted occurrence, an overlapping or ambiguous selector, changed
+attributes or changes to any other captured bytes. It returns the input hashes
+and substitution count. To verify restored captures, reverse the titles and
+compare the resulting capture hash with the original baseline.
+
+Use this narrow comparison on the preserved representative baseline where
+sanitized captures are deterministic. Encoded or mixed-markup title text and
+pages with unrelated byte changes are outside the supported comparison. Capture
+collection, store state, effect scope beyond the supplied pages, browser behavior,
+save hooks, caches, write attribution and authorization require their own evidence.
+
 ## What each result proves
 
 | Result | Evidence | Remaining boundary |
