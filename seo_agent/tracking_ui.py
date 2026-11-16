@@ -77,7 +77,7 @@ def settings_ui(store, sid):
 def proposals(store, sid, aid):
     st.subheader("Exact publication review")
     st.caption("Review values, facts, validation and rollback, then freeze the exact batch. Configured WordPress destinations also require a concrete CMS mapping, exact human CMS approval and an explicit Apply instruction.")
-    from . import publication_ui
+    from . import manual_publication_ui, publication_ui
     publication_ui.setup(store, sid)
     upload = st.file_uploader("Proposal handoff (JSON or Markdown)", type=["json", "md", "txt"], key=sid + ":handoff:" + aid)
     if st.button("Import proposal handoff", key=sid + ":handoff_import:" + aid, disabled=upload is None):
@@ -109,6 +109,8 @@ def proposals(store, sid, aid):
             st.text("Current: " + (a["current"] if a["current"] is not None else "Unknown") + "\nProposed: " + a["proposed"])
             st.text("Reason: " + a["rationale"] + "\nExpectation: " + a["expected_effect"] + "\nMeasure: " + a["measurement"])
             st.text("Validation: " + a["validation"] + "\nRollback: " + a["rollback"])
+            if a.get("manual_post_title"):
+                manual_publication_ui.scope(a)
             st.json(a["evidence"])
             for c in a["confirmations"]:
                 st.text("Factual assertion: " + c["item"] + " · " + c["status"] + " · " + (c["source"] or "source unavailable"))
@@ -128,8 +130,12 @@ def proposals(store, sid, aid):
             continue
         with st.expander("Frozen batch " + b["id"]):
             st.caption("Frozen at " + b["created"] + " · " + b["payload"]["fingerprint"])
+            manual = any(a["action"].get("manual_post_title") for a in b["payload"]["actions"])
             for a in b["payload"]["actions"]:
                 show_action(a["action"])
+                if a["action"].get("manual_post_title"):
+                    manual_publication_ui.scope(a["action"])
+                    manual_publication_ui.compare_public(store, sid, a)
                 st.caption("Revision " + str(a["revision"]) + " · action " + a["action_id"])
             with st.expander("Frozen evidence and capture references"):
                 st.json(b["payload"])
@@ -144,7 +150,9 @@ def proposals(store, sid, aid):
                     st.warning("Restored approval is historical evidence. Freeze a new batch and obtain fresh human approval before another attempt.")
             else:
                 with st.form(sid + ":approve:" + b["id"]):
-                    confirm = st.checkbox("I reviewed the exact actions, factual confirmations, validation and rollback", key=b["id"] + ":reviewed")
+                    confirm = st.checkbox("I reviewed the exact actions, factual confirmations, validation and rollback"
+                                          + (" and authorize the listed manual production editor and Update effects" if manual else ""),
+                                          key=b["id"] + ":reviewed")
                     source = st.text_input("Who confirmed the factual items and when?", max_chars=4000)
                     statement = st.text_input('Type "I approve this exact publication batch"', max_chars=100)
                     if st.form_submit_button("Record my exact human approval", disabled=bool(invalid)):
@@ -153,7 +161,10 @@ def proposals(store, sid, aid):
                             st.rerun()
                         except ValueError:
                             st.error("Approval not recorded. Explicit human authorization and a current unchanged batch are required.")
-            publication_ui.batch(store, sid, b["id"])
+            if manual:
+                manual_publication_ui.panel(store, sid, b, invalid)
+            else:
+                publication_ui.batch(store, sid, b["id"])
 
 
 def charts(store, sid, *, demo=False):

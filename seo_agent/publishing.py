@@ -104,6 +104,8 @@ def active_destination(store, sid, *, recovery=False):
 
 def approval(store, sid, bid):
     b = t.batch(store, sid, bid)
+    if any(f["action"].get("manual_post_title") for f in b["payload"]["actions"]):
+        raise ValueError("This approval covers a manual page title update only")
     if b["payload"]["fingerprint"] != t.digest(b["payload"]["actions"]):
         raise ValueError("Frozen batch fingerprint mismatch")
     found = [a for a in t.rows(store, "human_approvals", sid) if a["batch_id"] == bid]

@@ -94,6 +94,18 @@ def editor(store, sid, record):
             measure = st.selectbox("Primary proposal measure", METRICS, index=METRICS.index(a["primary_measure"]), key=key + ":measure")
             validation = st.text_area("Validation plan", a["validation"], key=key + ":validation", max_chars=4000)
             rollback = st.text_area("Rollback plan", a["rollback"], key=key + ":rollback", max_chars=4000)
+            changes = {}
+            if a["action_kind"] == "text":
+                mapping = a.get("manual_post_title") or {}
+                manual = st.checkbox("Manual WordPress page title update (Elementor heading uses Post Title)", value=bool(mapping), key=key + ":manual")
+                page_id = st.number_input("WordPress page ID for manual update", min_value=1, max_value=2**53 - 1, step=1, value=mapping.get("page_id"), key=key + ":manual_page")
+                widget_id = st.text_input("Dynamic Elementor heading widget ID", mapping.get("widget_id", ""), max_chars=7, key=key + ":manual_widget")
+                provenance = st.text_area("CMS evidence for raw page title and Post Title binding", mapping.get("source", ""), max_chars=2000, key=key + ":manual_source")
+                effects = st.text_area("Shared effects and affected URLs (include navigation, other title references and document title)", mapping.get("shared_effects", ""), max_chars=4000, key=key + ":manual_effects")
+                if manual:
+                    changes["manual_post_title"] = {"page_id": page_id, "widget_id": widget_id, "source": provenance, "shared_effects": effects}
+                elif mapping:
+                    changes["manual_post_title"] = None
             questions = sorted({c["item"] for c in a["confirmations"]} | set(review.required_questions(store, sid, record)))
             facts = st.text_area("Factual items (one per line)", "\n".join(questions), key=key + ":fact_items", max_chars=100000)
             st.caption("Existing questions are retained even if removed here. Changed wording resets facts to pending unless you explicitly confirm the exact revised wording.")
@@ -104,7 +116,7 @@ def editor(store, sid, record):
                 try:
                     if confirmed and not source.strip():
                         raise ValueError("Provide the responsible owner's confirmation source")
-                    review.revise(store, sid, record, {"proposed": proposed, "rationale": rationale, "expected_effect": expected, "measurement": measurement, "primary_measure": measure, "validation": validation, "rollback": rollback,
+                    review.revise(store, sid, record, {**changes, "proposed": proposed, "rationale": rationale, "expected_effect": expected, "measurement": measurement, "primary_measure": measure, "validation": validation, "rollback": rollback,
                         "confirmations": [{"item": item.strip(), "status": "pending", "source": None} for item in facts.splitlines() if item.strip()]}, note=note, owner_confirmed=confirmed, confirmation_source=source)
                     st.rerun()
                 except ValueError as exc:

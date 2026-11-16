@@ -198,8 +198,34 @@ def observed_value(values, a, *, proposed=False, target=None, html=None):
             actual = str(children[index])
         else:
             actual = node.get_text()
+        if mapping := a.get("manual_post_title"):
+            return candidate if actual == candidate and matches_title_widget(soup, node, target, mapping) else None
         return candidate if text_value(actual) == target["after" if proposed else "before"] else None
     return None
+
+
+def matches_title_widget(soup, node, target, mapping):
+    if (target["text_child"] is not None or node.name not in {"h1", "h2", "h3", "h4", "h5", "h6"}
+            or node.find(True) or node.find_parent("a")):
+        return False
+    documents = soup.find_all(attrs={"data-elementor-id": str(mapping["page_id"])})
+    widgets = soup.find_all(attrs={"data-id": mapping["widget_id"]})
+    if len(documents) != 1 or len(widgets) != 1:
+        return False
+    document, widget = documents[0], widgets[0]
+    boundary = node.find_parent(lambda n: n.has_attr("data-elementor-id") or n.has_attr("data-elementor-type"))
+    nearest_widget = node.find_parent(attrs={"data-widget_type": True})
+    return (document is boundary and document.get("data-elementor-type") == "wp-page"
+            and not document.find_parent(lambda n: n.has_attr("data-elementor-id") or n.has_attr("data-elementor-type"))
+            and widget is nearest_widget and document in widget.parents
+            and widget.get("data-widget_type") == "heading.default"
+            and len(widget.find_all(re.compile(r"^h[1-6]$"))) == 1)
+
+
+def title_surfaces(values, url):
+    return {k: values.get(k) for k in ("title", "canonical", "index_directive", "x_robots_tag")} | {
+        "link_labels_to_this_url": [link["text"] for link in values["links"] if link["href"] == url],
+    }
 
 
 def latest_snapshot(store, sid, url, *, successful=False):
@@ -228,11 +254,18 @@ def save_snapshot(store, sid, url, *, status, payload, checked=None, audit_id=No
         db.execute("INSERT INTO public_snapshots VALUES (?,?,?,?,?,?,?)", (snapid, sid, url, checked, status, audit_id, canonical(payload)))
         if status == "complete":
             from .tracking import batch
+            snapshots = {r["id"]: r for r in rows(store, "public_snapshots", sid) if r["url"] == url}
             for approval in rows(store, "human_approvals", sid):
                 b = batch(store, sid, approval["batch_id"])
                 for frozen in b["payload"]["actions"]:
                     a = frozen["action"]
-                    if a["url"] == url and observed_value(payload["values"], a, target=frozen.get("target"), html=payload["html"]) != a["current"]:
+                    if a["url"] != url:
+                        continue
+                    different = observed_value(payload["values"], a, target=frozen.get("target"), html=payload["html"]) != a["current"]
+                    if a.get("manual_post_title") and not different:
+                        baseline = snapshots.get(frozen["snapshot_id"])
+                        different = not baseline or title_surfaces(baseline["payload"]["values"], url) != title_surfaces(payload["values"], url)
+                    if different:
                         old = db.execute("SELECT 1 FROM approval_invalidations WHERE approval_id=? AND action_id=?", (approval["id"], frozen["action_id"])).fetchone()
                         if not old:
                             db.execute("INSERT INTO approval_invalidations VALUES (?,?,?,?,?,?,?)", (new_id(), sid, approval["id"], frozen["action_id"], frozen["revision"], checked, canonical({"reason": "Observed current value changed; approval cannot be reused even if the value later returns", "snapshot_id": snapid})))
