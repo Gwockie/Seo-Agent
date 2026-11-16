@@ -146,7 +146,8 @@ def compare_action(store, sid, identity, revision, followup_aid):
     followup = store.audit(sid, followup_aid)
     receipts = [v["payload"] for v in rows(store, "implementation_receipts", sid) if v["action_id"] == identity and v["revision"] == revision and v["payload"]["environment"] == "production"]
     applied = [v for v in receipts if v["outcome"] == "reported_applied"]
-    if len(applied) != 1 or any(v["outcome"] in {"partial", "rolled_back", "correction"} for v in receipts):
+    if len(applied) != 1 or any(v["outcome"] in {"partial", "rolled_back", "correction"}
+                                or (v["outcome"] == "manual_reconciliation" and v["actual"] != v["proposed"]) for v in receipts):
         return {"status": "not ready", "reason": "A single exact reported publication date is required. Outside observation intervals, partial work, corrections and rollbacks cannot establish it."}
     a = r["payload"]
     if a["primary_measure"] in ("Indexing / correct landing page", "Content accuracy / user experience"):

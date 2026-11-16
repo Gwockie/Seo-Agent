@@ -3,7 +3,7 @@ from . import page_tracking, tracking
 from .storage import new_id, utc_now
 
 
-def context(store, sid, bid):
+def context(store, sid, bid, *, allow_history=False):
     batch = tracking.batch(store, sid, bid)
     frozen = batch["payload"]["actions"]
     if tracking.digest(frozen) != batch["payload"]["fingerprint"] or len(frozen) != 1:
@@ -12,7 +12,8 @@ def context(store, sid, bid):
     if not action["action"].get("manual_post_title"):
         raise ValueError("This action has no manual page title mapping")
     approval = next((r for r in tracking.rows(store, "human_approvals", sid) if r["batch_id"] == bid), None)
-    if not approval or approval["payload"].get("history_only") or approval["payload"]["fingerprint"] != batch["payload"]["fingerprint"]:
+    if (not approval or (approval["payload"].get("history_only") and not allow_history)
+            or approval["payload"]["fingerprint"] != batch["payload"]["fingerprint"]):
         raise ValueError("Fresh exact human approval is required")
     return action, approval
 
@@ -32,7 +33,7 @@ def _receipt(store, sid, frozen, approval, attempt, outcome, source, *, actual=N
         "current": a["current"], "proposed": a["proposed"], "actual": actual, "approval_id": approval["id"],
         "source": source, "verification": "Exact public heading observed in saved HTML" if snapshot else "",
         "verification_snapshot_id": snapshot, "corrects": None,
-    })
+    }, manual_operator=True)
 
 
 def begin(store, sid, bid, *, preflight_confirmed, source):
@@ -43,13 +44,13 @@ def begin(store, sid, bid, *, preflight_confirmed, source):
 
 
 def report(store, sid, bid, *, outcome, source, occurred, partial_value=None):
-    frozen, approval = context(store, sid, bid)
+    frozen, approval = context(store, sid, bid, allow_history=True)
     events = history(store, sid, frozen, approval)
     if len(events) != 1 or events[0]["outcome"] != "attempted":
         raise ValueError("A pending manual attempt is required")
     if outcome not in {"reported_applied", "failed", "partial"} or not source.strip() or not occurred.strip():
         raise ValueError("Supply the operator outcome, UTC event time and source")
-    if outcome == "partial" and not (partial_value or "").strip():
+    if outcome == "partial" and partial_value is None:
         raise ValueError("Enter the actual reported title for partial work")
     actual = {"reported_applied": frozen["action"]["proposed"], "partial": partial_value}.get(outcome)
     return _receipt(store, sid, frozen, approval, events[0]["attempt_id"], outcome, "Manual operator report · " + source.strip(), actual=actual, occurred=occurred)
@@ -59,7 +60,7 @@ def observation(store, sid, frozen, events):
     a = frozen["action"]
     snapshot = page_tracking.latest_snapshot(store, sid, a["url"])
     applied = next((v for v in events if v["outcome"] == "reported_applied"), None)
-    if not applied or any(v["outcome"] in {"correction", "rolled_back"} for v in events):
+    if not applied or any(v["outcome"] in {"correction", "rolled_back", "manual_reconciliation"} for v in events):
         return None, "A current matching operator report is required"
     if not snapshot or snapshot["checked"] <= applied["occurred_utc"] or snapshot["status"] != "complete":
         return None, "Refresh tracked pages to collect successful public HTML after the reported publication time"
@@ -69,10 +70,19 @@ def observation(store, sid, frozen, events):
 
 
 def verify(store, sid, bid):
-    frozen, approval = context(store, sid, bid)
+    frozen, approval = context(store, sid, bid, allow_history=True)
     events = history(store, sid, frozen, approval)
     snapshot, message = observation(store, sid, frozen, events)
     if snapshot is None:
         raise ValueError(message)
     return _receipt(store, sid, frozen, approval, events[0]["attempt_id"], "verification",
                     "Read-only public tracking capture", actual=frozen["action"]["proposed"], snapshot=snapshot["id"])
+
+
+def reconcile(store, sid, bid, *, scope_checked, actual, source):
+    frozen, approval = context(store, sid, bid, allow_history=True)
+    events = history(store, sid, frozen, approval)
+    if not events or scope_checked is not True or actual is None or not source.strip():
+        raise ValueError("Confirm the current CMS title and shared effects from read-only evidence")
+    return _receipt(store, sid, frozen, approval, events[0]["attempt_id"], "manual_reconciliation",
+                    "Manual operator reconciliation · " + source.strip(), actual=actual)

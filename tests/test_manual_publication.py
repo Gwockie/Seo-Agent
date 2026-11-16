@@ -131,3 +131,45 @@ class ManualPublicationTests(TrackingFixture, unittest.TestCase):
                                                "actual": self.after, "occurred_utc": utc_now()})
         t.record_receipt(self.store, self.sid, {**base, "receipt_id": new_id(), "outcome": "verification",
                                                "actual": self.after, "occurred_utc": utc_now(), "verification": "Synthetic staging evidence"})
+
+    def test_pending_or_uncertain_attempt_blocks_new_revisions_and_action_ids(self):
+        from seo_agent.storage import new_id
+
+        bid = self.freeze()
+        self.approve(bid)
+        m.begin(self.store, self.sid, bid, preflight_confirmed=True, source="Synthetic preflight")
+        old = t.action(self.store, self.sid, self.identity, 2)
+        replacement = {**old["payload"], "proposed": "Different service title"}
+        t.save_action(self.store, self.sid, self.aid, replacement, revision=3)
+        other = t.save_action(self.store, self.sid, self.aid, {**replacement, "action_id": new_id()})
+        retries = [t.freeze_batch(self.store, self.sid, [target]) for target in ((self.identity, 3), (other, 1))]
+        for retry in retries:
+            self.approve(retry)
+            with self.assertRaisesRegex(ValueError, "Reconcile the earlier"):
+                m.begin(self.store, self.sid, retry, preflight_confirmed=True, source="Synthetic preflight")
+        m.report(self.store, self.sid, bid, outcome="failed", occurred=utc_now(), source="Synthetic unknown result")
+        with self.assertRaisesRegex(ValueError, "Reconcile the earlier"):
+            m.begin(self.store, self.sid, retries[0], preflight_confirmed=True, source="Synthetic preflight")
+        m.reconcile(self.store, self.sid, bid, scope_checked=True, actual=self.before, source="Synthetic raw CMS state and shared effects")
+        m.begin(self.store, self.sid, retries[0], preflight_confirmed=True, source="Synthetic preflight")
+
+    def test_import_cannot_skip_manual_preflight(self):
+        bid = self.freeze()
+        approval = self.approve(bid)
+        imported = {**self.receipt(environment="production", approval=approval), "action_id": self.identity,
+                    "revision": 2, "current": self.before, "proposed": self.after}
+        with self.assertRaisesRegex(ValueError, "explicit CMS preflight"):
+            t.record_receipt(self.store, self.sid, t.canonical(imported).encode())
+        self.assertFalse(t.rows(self.store, "implementation_receipts", self.sid))
+
+    def test_restored_approval_can_close_an_attempt_without_authorizing_a_write(self):
+        bid = self.freeze()
+        self.approve(bid)
+        m.begin(self.store, self.sid, bid, preflight_confirmed=True, source="Synthetic preflight")
+        with self.store.db() as db:
+            db.execute("UPDATE human_approvals SET payload = json_set(payload, '$.history_only', 1) WHERE batch_id = ?", (bid,))
+        with self.assertRaisesRegex(ValueError, "Fresh exact human approval"):
+            m.begin(self.store, self.sid, bid, preflight_confirmed=True, source="Synthetic preflight")
+        m.report(self.store, self.sid, bid, outcome="failed", occurred=utc_now(), source="Synthetic unknown result")
+        m.reconcile(self.store, self.sid, bid, scope_checked=True, actual=self.before, source="Synthetic read-only CMS state")
+        self.assertEqual(t.rows(self.store, "implementation_receipts", self.sid)[-1]["payload"]["outcome"], "manual_reconciliation")

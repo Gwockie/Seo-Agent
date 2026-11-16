@@ -115,7 +115,12 @@ Before opening the editor, recheck the live CMS baseline and effect scope using
 authorized read-only evidence, preserve the existing revision reference, and
 select **Record start of manual attempt** in the app. Follow the steps for that page,
 enter the actual outcome time in UTC and save the operator report. Record partial
-or uncertain outcomes as such, and reconcile them before any further update.
+or uncertain outcomes as such. The app blocks another manual attempt for the
+same page across action IDs and revisions until the earlier attempt has public
+heading verification or a recorded operator reconciliation. Use **Record
+operator reconciliation** after checking the raw CMS Title and shared effects
+with read-only access. Imported receipts cannot start a manual title attempt
+or substitute for the app's reconciliation controls.
 
 Use **Refresh tracked pages** after publication. If needed, add the exact URL in
 **Tracked pages and check settings**. A successful later capture showing the

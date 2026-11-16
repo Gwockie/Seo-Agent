@@ -18,11 +18,12 @@ def scope(a):
 def panel(store, sid, batch, invalid):
     bid = batch["id"]
     try:
-        frozen, approval = manual.context(store, sid, bid)
+        frozen, approval = manual.context(store, sid, bid, allow_history=True)
     except ValueError:
         return
     a = frozen["action"]
     events = manual.history(store, sid, frozen, approval)
+    invalid = invalid or approval["payload"].get("history_only")
     st.markdown("**Manual CMS handoff**")
     if not events:
         if invalid:
@@ -51,7 +52,7 @@ def panel(store, sid, batch, invalid):
             choices = {"reported_applied": "I published the exact title", "failed": "Publication failed or the result is unknown", "partial": "A different title or partial result was observed"}
             outcome = st.selectbox("Manual publication outcome", list(choices), index=None, format_func=choices.get)
             occurred = st.text_input("Outcome time in UTC (ISO 8601)", max_chars=40)
-            actual = st.text_input("Actual title for a partial result", max_chars=8000)
+            actual = st.text_input("Actual title for a partial result", max_chars=8000, help="Leave this blank for a partial result only if the stored Title was empty.")
             source = st.text_area("Operator and outcome evidence or uncertainty", max_chars=3900)
             if st.form_submit_button("Record operator report"):
                 try:
@@ -63,8 +64,8 @@ def panel(store, sid, batch, invalid):
     for event in events[1:]:
         label = "Public heading verified at capture" if event.get("verification_snapshot_id") else "Reported " + event["outcome"].replace("_", " ")
         st.text(label + " · " + event["occurred_utc"] + "\n" + event["source"])
-        if event["outcome"] == "partial":
-            st.text("Operator-reported actual title · " + event["actual"])
+        if event["outcome"] in {"partial", "manual_reconciliation"}:
+            st.text("Operator-reported actual title · " + repr(event["actual"]))
         if event.get("verification_snapshot_id"):
             st.text("Public capture reference · " + event["verification_snapshot_id"])
     snapshot, status = manual.observation(store, sid, frozen, events)
@@ -81,6 +82,17 @@ def panel(store, sid, batch, invalid):
                     st.error(str(exc))
     if events[-1]["outcome"] in {"partial", "failed", "correction", "rolled_back"}:
         st.warning("Reconcile the actual CMS title and shared effects before proposing any inverse operation. The original rollback candidate assumes the exact proposed title was saved.")
+    if not snapshot and events[-1]["outcome"] not in {"verification", "manual_reconciliation"}:
+        with st.form(bid + ":manual_reconcile"):
+            checked = st.checkbox("I reconciled the raw CMS Title and shared effects using read-only evidence")
+            actual = st.text_input("Current raw CMS Title", max_chars=8000, help="Leave blank only if the stored Title is empty.")
+            source = st.text_area("Reconciliation evidence and observed shared effects", max_chars=3900)
+            if st.form_submit_button("Record operator reconciliation"):
+                try:
+                    manual.reconcile(store, sid, bid, scope_checked=checked, actual=actual, source=source)
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
 
 
 def compare_public(store, sid, frozen, snapshot=None):
