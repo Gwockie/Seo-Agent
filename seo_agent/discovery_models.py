@@ -103,6 +103,9 @@ class Software(StrictModel):
     version: str = Field(default="", max_length=80)
     active: bool | None = None
     sha256: str = Field(default="", pattern=r"^([a-f0-9]{64})?$")
+    # Assert the live installation's table identity; never infer it from a suffix
+    # or from the server's default storage engine.
+    table_role: Literal["posts", "postmeta", "options", "journal"] | None = None
 
 
 class Metadata(StrictModel):

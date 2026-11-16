@@ -194,6 +194,10 @@ def render(store, sid, *, demo=False):
                 st.text(f"{data['action_id']} · revision {data['revision']} · {data['level']} · {d.status(store, sid, cid, row)}")
                 for reason in data["preparation_blockers"] + data["publication_blockers"]:
                     st.warning(reason)
+                diagnostic = data.get("dependency_diagnostic")
+                if diagnostic and diagnostic.get("kind") == "dynamic_post_title":
+                    st.warning(diagnostic["explanation"])
+                    st.caption(diagnostic["limits"])
                 st.json(data)
         else:
             st.info("Save an exact action under Recommendations & changes first.")

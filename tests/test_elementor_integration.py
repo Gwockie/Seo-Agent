@@ -115,6 +115,10 @@ class ElementorIntegration(unittest.TestCase):
         finally:
             self.restore(before)
 
+    def test_nontransactional_tables_refuse_state_and_fresh_write_without_mutation(self):
+        from tests.transactional_fixture import reject_nontransactional_tables
+        reject_nontransactional_tables(self, CONTAINER)
+
     def test_wrong_scope_row_field_token_and_entity_rejected(self):
         before = self.client.state(3)
         for fields in ({'instance':'other'}, {'environment':'production'}, {'metadata_row_id':-1}, {'element_id':'missing'},

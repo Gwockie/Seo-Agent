@@ -144,6 +144,19 @@ def status(store, sid, cid, row):
                 if row["kind"] == "mapping" else {"administrator_export": body["data"]["evidence_id"]})
         if row["kind"] == "publisher_host_review":
             deps["public"] = body["data"]["public_evidence_id"]
+            # Bind even the absence of REST evidence. A newly collected record,
+            # replacement or expiry requires a fresh independent human review.
+            if "authenticated_evidence_id" not in body["data"]:
+                return "invalidated"
+            auth = latest(store, sid, cid, "authenticated", current=False)
+            if auth and auth["payload"]["body"]["scope"] != body["scope"]:
+                auth = None
+            if auth and status(store, sid, cid, auth) != "current":
+                return "invalidated"
+            if body["data"]["authenticated_evidence_id"] != (auth["id"] if auth else None):
+                return "invalidated"
+            if body["data"].get("authenticated_fact_evidence_ids") != authenticated_inventory(store, sid, cid)["evidence_ids"]:
+                return "invalidated"
         for kind, eid in deps.items():
             parent = latest(store, sid, cid, kind)
             if not parent or parent["id"] != eid:
@@ -154,6 +167,35 @@ def status(store, sid, cid, row):
 def latest(store, sid, cid, kind, *, current=True):
     row = next((r for r in records(store, sid, cid) if r["kind"] == kind), None)
     return row if row and (not current or status(store, sid, cid, row) == "current") else None
+
+
+def authenticated_inventory(store, sid, cid):
+    """Keep known REST facts when a later partial response omits them.
+
+    This is conflict evidence, never a complete or freshly verified inventory.
+    Only an explicit later field value replaces a known value in this scope.
+    """
+    expected = scope(store, sid, connection(store, sid, cid))
+    history = [r for r in records(store, sid, cid) if r["kind"] == "authenticated"
+               and r["payload"]["body"]["scope"] == expected and not r["payload"]["body"].get("history_only")]
+    facts = {}
+    for row in reversed(history):
+        body = row["payload"]["body"]
+        for item in body["data"].get("software", []):
+            if item["kind"] not in {"plugin", "theme"}:
+                continue
+            target = facts.setdefault((item["kind"], item["name"]),
+                                     dict(kind=item["kind"], name=item["name"], version="", active=None, fact_sources={}))
+            for field in ("version", "active"):
+                if (item.get(field) is not None if field == "active" else bool(item.get(field))):
+                    target[field] = item[field]
+                    target["fact_sources"][field] = dict(evidence_id=row["id"], observed_utc=body["observed_utc"])
+    for item in facts.values():
+        item["retained"] = any(s["evidence_id"] != history[0]["id"] or
+                               datetime.now(timezone.utc) - timestamp(s["observed_utc"]) > MAX_AGE
+                               for s in item["fact_sources"].values())
+    return {"software": list(facts.values()),
+            "evidence_ids": sorted({s["evidence_id"] for item in facts.values() for s in item["fact_sources"].values()})}
 
 
 def attempts(store, sid, cid):
@@ -265,6 +307,9 @@ def validate_export(raw, store, sid, c):
             reject()
         if len({(s.kind, s.name) for s in bundle.software}) != len(bundle.software):
             reject()
+        roles = [s.table_role for s in bundle.software if s.table_role is not None]
+        if len(set(roles)) != len(roles) or any(s.table_role is not None and s.kind != "table_engine" for s in bundle.software):
+            reject()
         if len({h.area for h in bundle.host}) != len(bundle.host):
             reject()
         rows = set()
@@ -331,6 +376,7 @@ def export_file(store, sid, cid, path, *, template=False):
 
 
 def compatibility(store, sid, cid):
+    from .publisher_preflight import inspect_inventory
     c = connection(store, sid, cid)
     rows = records(store, sid, cid)
     current = {}
@@ -366,11 +412,12 @@ def compatibility(store, sid, cid):
         missing.append("Administrator page/template/raw excerpt/metadata row and shared reference evidence")
     missing += public.get("missing", []) + auth.get("missing", [])
     isolation = isolation_status(store, sid, cid, current)
-    blocker = "Discovery does not certify a writable installation. Version 1 remains restricted to the documented core-heading stack and fresh publisher preflight."
-    has_elementor = any("elementor" in s["name"].lower() for s in admin.get("software", []) + auth.get("software", [])) or any("elementor" in x["value"].lower() for x in public.get("clues", []))
+    blocker = "Discovery alone does not certify a writable installation. A matching pinned publisher endpoint and fresh host/staging validation are required."
+    auth_facts = authenticated_inventory(store, sid, cid)
+    has_elementor = any("elementor" in s["name"].lower() for s in admin.get("software", []) + auth_facts["software"]) or any("elementor" in x["value"].lower() for x in public.get("clues", []))
     blockers = [blocker]
     for s in auth.get("software", []) + admin.get("software", []):
-        if s["active"] is True and ((s["kind"] == "plugin" and s["name"] != "local-seo-publisher/local-seo-publisher.php")
+        if not has_elementor and s["active"] is True and ((s["kind"] == "plugin" and s["name"] != "local-seo-publisher/local-seo-publisher.php")
                                     or s["kind"] == "theme" and s["name"] != "twentytwentyfive"
                                     or s["kind"] in {"mu_plugin", "dropin"}):
             blockers.append(f"Recorded active {s['kind']} {s['name']} is outside the version 1 core-heading contract (see source certainty).")
@@ -378,11 +425,14 @@ def compatibility(store, sid, cid):
         blockers.append("Elementor mapping alone cannot enable publication. The separate pinned canvas-heading adapter requires matching fresh runtime and independently reviewed host/staging evidence; other stacks remain unsupported.")
     if not public:
         blockers.append("Refresh current public REST identities before cross-checking any imported page mapping.")
+    pinned = inspect_inventory(admin, authenticated=auth_facts)
+    if has_elementor:
+        blockers.extend(pinned["conflicts"])
     return {"schema_version": 1, "scope": scope(store, sid, c), "evaluated_utc": utc_now(),
             "publishing_compatible": False, "confirmed": confirmed, "inferred": inferred,
             "administrator_asserted": asserted, "missing": missing,
             "stale_or_invalidated": [{"id": r["id"], "version": r["version"], "kind": r["kind"], "status": status(store, sid, cid, r)} for r in rows if status(store, sid, cid, r) != "current"],
-            "blockers": blockers, "staging": isolation,
+            "blockers": blockers, "staging": isolation, "elementor_preflight": pinned, "elementor_detected": has_elementor,
             "supported_combinations": [{"adapter": "core-heading/1", "validated_fixture": "WordPress 7.1.3 / PHP 8.3 / MariaDB 11.4 / Twenty Twenty-Five",
                 "requirements": "Only the publisher companion active; no MU/drop-ins/multisite/custom/shared templates; flat core blocks, unique explicit heading anchor and explicit excerpt. Fresh server checks and host validation required.",
                 "installation_status": "not_certified_by_discovery"}, {"adapter": "elementor-heading/1", "installation_status": "requires_separate_certified_endpoint_and_host_review",

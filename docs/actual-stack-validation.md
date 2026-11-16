@@ -33,6 +33,23 @@ is not silently substituted for an explicit heading level. Do not convert a dyna
 title or choose a different heading to make a saved action pass. Revise the
 authoritative proposal using fresh evidence when its current text/target differs.
 
+Elementor describes [Post Title as the current post's title](https://elementor.com/help/dynamic-tags-pro-2/).
+For an exact empty-settings dynamic `post-title` binding, a blocked result can
+also explain the dependency. It first cross-checks the selected rendered heading
+against the saved action's structural target. It retains the raw metadata and
+binding hashes/path, asserted row ID and capture hash. The result
+inherits the action, evidence, environment and freshness bindings above.
+
+Discovery captures omit link labels and document titles. Their other title
+references are explicitly unavailable, never counted as zero. This is a dependency
+diagnosis, not a tested effect inventory.
+Changing a source title can affect navigation, other widgets and document titles;
+the full scope still needs independent evidence. The diagnostic does not assert
+the stored post title, create replacement JSON, revise the action, validate staging
+or enable publishing. Unknown/configurable tags and ambiguous rendered targets do
+not receive this specific diagnosis. Static and dynamic publisher restrictions are
+unchanged.
+
 ## What each result proves
 
 | Result | Evidence | Remaining boundary |
@@ -82,3 +99,43 @@ known. Installation/activation, accounts/capabilities, deployment, publication a
 temporary host cleanup retain their separate exact-action approvals. See
 [website change policy](website-change-policy.md) and
 [Elementor publishing](elementor-publishing.md).
+
+For an already downloaded, separately approved source collection,
+`seo_agent.source_manifest.manifest_archive` creates an inert file manifest from
+an exact retained archive SHA256, one wrapper directory, and explicit relative
+directory/file allowlists. It checks the ZIP directory bounds before loading the
+entry list, checks the complete indexed local-record layout, rejects path aliases,
+unexpected files, links, special files, encryption, unsupported layouts and
+expansion limits, and verifies each file's length/CRC/SHA256 and complete compressed
+payload. Path depth and derived tree size have separate limits. It rereads the
+archive hash before returning. No files are
+extracted or executed, and the function makes no network or app-record writes.
+
+Every approved source item must be present. Recursive code roots include packaged
+descendants such as vendor test files and packaged `.htaccess`; a collector must
+not promise descendant exclusions that a whole-folder copy cannot enforce.
+Callers must keep archives/manifests protected, screen source for sensitive data,
+retain collection provenance and approvals, and independently verify live identity,
+freshness and isolation before any execution. A manifest's canonical tree digest
+supports byte comparison; it is not a publisher source certificate, complete
+activation inventory or proof that the source contains no credentials. ZIP64 and
+multipart archives are unsupported; do not silently loosen bounds to accept them.
+The default path policy rejects case/Unicode aliases for portable storage. An
+explicit `path_semantics="posix"` preserves case-distinct Linux source paths in
+the inert manifest, with that policy bound into its tree digest. Such a manifest
+does not establish that extraction onto Windows would preserve those files.
+
+The setup packet and readiness report retain known inventory conflicts as well as
+missing evidence. The pinned Elementor preflight compares explicit live table
+roles, engines, versions, hashes and active software. It distinguishes preparation
+before installation (the companion and journal may be absent) from host review
+after installation (both must be present). Complete category labels or a human
+checkbox cannot override incompatible or missing inventory rows.
+
+MyISAM cannot supply the existing contract's atomic content/mirror/journal
+transaction: [MySQL documents that nontransactional changes cannot be rolled back](https://dev.mysql.com/doc/refman/8.4/en/nontransactional-tables.html).
+The disposable Docker tests replace each required synthetic table's
+engine in turn and verify that both publishers reject state reads and fresh writes,
+preserve exact rows and timestamps, and retain read-only reconciliation of earlier
+success. This is rejection coverage, not a MyISAM publishing certificate. Keep the
+preserved site baseline separate and do not convert live tables to fit the tests.

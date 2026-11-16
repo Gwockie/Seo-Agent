@@ -24,8 +24,8 @@ def _sha(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def inspect_heading(raw, page_id, element_id):
-    """Inspect only; returned mappings must never be passed to a publisher."""
+def _heading_node(raw, page_id, element_id):
+    """Validate the complete document before returning a unique leaf heading."""
     if type(page_id) is not int or page_id < 1 or not isinstance(element_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", element_id):
         raise ValueError("Explicit page and widget identities are required")
     data, spans = _parse(raw)
@@ -54,22 +54,57 @@ def inspect_heading(raw, page_id, element_id):
             if identity == element_id:
                 if kind != "widget" or node.get("widgetType") != "heading" or children:
                     raise ValueError("Selected widget is not a leaf heading")
-                if own or ancestor_dependencies:
-                    raise ValueError("Selected heading or ancestor has dynamic/shared/global dependencies")
-                if not _unlinked(settings.get("link")):
-                    raise ValueError("Selected heading is linked")
-                if settings.get("header_size") not in ("h1", "h2", "h3", "h4", "h5", "h6"):
-                    raise ValueError("Heading level is implicit or unsupported; independently certify the installed default first")
-                title = plain(settings.get("title"))
-                selected.append(HeadingMapping(page_id, identity, ancestors, here + ("settings", "title"),
-                                               settings["header_size"], title, _sha(raw)))
+                selected.append((settings, here, ancestors, own + ancestor_dependencies))
             walk(children, here + ("elements",), ancestors + (identity,), ancestor_dependencies + own)
 
     walk(data, (), (), [])
     if len(selected) != 1:
         raise ValueError("Selected heading identity is missing")
-    mapping = selected[0]
+    return selected[0], spans, dependencies
+
+
+def inspect_heading(raw, page_id, element_id):
+    """Inspect only; returned mappings must never be passed to a publisher."""
+    (settings, path, ancestors, selected_dependencies), spans, dependencies = _heading_node(raw, page_id, element_id)
+    if selected_dependencies:
+        raise ValueError("Selected heading or ancestor has dynamic/shared/global dependencies")
+    if not _unlinked(settings.get("link")):
+        raise ValueError("Selected heading is linked")
+    if settings.get("header_size") not in ("h1", "h2", "h3", "h4", "h5", "h6"):
+        raise ValueError("Heading level is implicit or unsupported; independently certify the installed default first")
+    mapping = HeadingMapping(page_id, element_id, ancestors, path + ("settings", "title"),
+                             settings["header_size"], plain(settings.get("title")), _sha(raw))
     return mapping, spans[mapping.path], dependencies
+
+
+def post_title_diagnostic(raw, page_id, element_id, current, target, capture, metadata_row_id):
+    """Explain one blocked dynamic target; never return a candidate or writer mapping.
+
+    The saved action must identify this exact rendered heading. Discovery's
+    sanitized captures omit link labels and document titles, so they cannot
+    establish the presence or absence of other title references.
+    """
+    (settings, path, ancestors, _), _, dependencies = _heading_node(raw, page_id, element_id)
+    dynamic = settings.get("__dynamic__")
+    tag = dynamic.get("title") if isinstance(dynamic, dict) else None
+    if not isinstance(tag, str) or not re.fullmatch(
+            r'\[elementor-tag id="[a-f0-9]{7}" name="post-title" settings="%7[Bb]%7[Dd]"\]', tag):
+        return None
+    if not _unlinked(settings.get("link")) or settings.get("header_size") not in ("h1", "h2", "h3", "h4", "h5", "h6"):
+        return None
+    # Used only for structural cross-checking, never returned as a publishable mapping.
+    mapping = HeadingMapping(page_id, element_id, ancestors, path + ("settings", "title"),
+                             settings["header_size"], plain(current), _sha(raw))
+    bind_target(capture, target, mapping)
+    return {"kind": "dynamic_post_title", "metadata_row_id": metadata_row_id,
+            "metadata_identity_certainty": "administrator_asserted", "source_sha256": _sha(raw),
+            "binding_path": list(path + ("settings", "__dynamic__", "title")), "binding_sha256": _sha(tag),
+            "rendered_action_target_cross_checked": True, "dependencies": dependencies,
+            "capture": {"page_id": page_id, "url": capture["url"], "html_sha256": _sha(capture["html"])},
+            "other_title_references": "unavailable_from_discovery_capture",
+            "effect_scope_complete": False,
+            "explanation": "This heading uses a dynamic post-title binding. Changing its source title can also change navigation labels, other widgets and the document title. The static heading publisher cannot apply this action.",
+            "limits": "Discovery captures omit link labels and document titles; they do not prove that other title references are absent. Other pages, shared templates, plugins, save hooks, assets and caches require separate evidence. No stored source title value, complete effect scope, candidate, staging validation or publication authority is established."}
 
 
 def current_action(store, sid, action_id, revision):
@@ -179,6 +214,14 @@ def prepare(store, sid, cid, action_id, revision, page_id, element_id):
                     except ValueError as e:
                         # Parser and mapping errors are deliberately fixed messages, never raw input.
                         blocked.append(str(e))
+                        try:
+                            diagnostic = post_title_diagnostic(raw, page_id, element_id, value["current"],
+                                report["action_context"]["target"], capture, metadata[0]["row_id"])
+                            if diagnostic:
+                                report["dependency_diagnostic"] = diagnostic
+                        except ValueError:
+                            # An unbound/ambiguous target must not gain a reassuring diagnosis.
+                            pass
         report["level"] = "candidate_prepared" if report["candidate"] else "blocked"
         observed = min([r["payload"]["body"]["observed_utc"] for r in (public, admin) if r] or [d.utc_now()])
         return d._save(store, sid, c, KIND, report, observed=observed,
