@@ -120,7 +120,9 @@ same page across action IDs and revisions until the earlier attempt has public
 heading verification or a recorded operator reconciliation. Use **Record
 operator reconciliation** after checking the raw CMS Title and shared effects
 with read-only access. Imported receipts cannot start a manual title attempt
-or substitute for the app's reconciliation controls.
+or substitute for the app's reconciliation controls. An unresolved automated
+production attempt blocks a manual start on the same page, and an unresolved
+manual attempt blocks an automated write there.
 
 Use **Refresh tracked pages** after publication. If needed, add the exact URL in
 **Tracked pages and check settings**. A successful later capture showing the
@@ -130,6 +132,8 @@ title, links to this URL and index directives with the frozen baseline. The
 verification covers the observed public heading. Check the remaining shared
 surfaces, raw CMS state and cache behavior using separately authorized access.
 The journal stores the operator report and observation separately.
+Record an operator reconciliation if the raw Title or other observed effects
+conflict with a matching public heading. Both observations remain in the journal.
 
 For rollback, confirm the current raw Title, revision and affected surfaces,
 prepare an exact inverse review with the current Title and original Title, and

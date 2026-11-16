@@ -82,7 +82,7 @@ def panel(store, sid, batch, invalid):
                     st.error(str(exc))
     if events[-1]["outcome"] in {"partial", "failed", "correction", "rolled_back"}:
         st.warning("Reconcile the actual CMS title and shared effects before proposing any inverse operation. The original rollback candidate assumes the exact proposed title was saved.")
-    if not snapshot and events[-1]["outcome"] not in {"verification", "manual_reconciliation"}:
+    if events[-1]["outcome"] != "manual_reconciliation":
         with st.form(bid + ":manual_reconcile"):
             checked = st.checkbox("I reconciled the raw CMS Title and shared effects using read-only evidence")
             actual = st.text_input("Current raw CMS Title", max_chars=8000, help="Leave blank only if the stored Title is empty.")

@@ -320,6 +320,11 @@ def render_action(source, action, expected):
     return rendered(source, action["anchor"], expected)
 
 
+def _check_manual_attempt(db, sid, destination, action):
+    if destination["environment"] == "production" and t.unreconciled_title_attempt(db, sid, action["object_id"], action["url"]):
+        raise ValueError("Reconcile the earlier manual attempt for this WordPress page before starting an automated update")
+
+
 def execute(store, sid, rid, *, human_clicked, direction="apply", client_factory=WordPress):
     """Explicit apply/rollback only. A rerun never resends an existing attempt."""
     store.require_private_write()
@@ -357,6 +362,8 @@ def execute(store, sid, rid, *, human_clicked, direction="apply", client_factory
                 inspect_state(p["destination"], state, a["url"])
                 if state["token"] != token:
                     raise ValueError("CMS conflict: content changed since review/write; do not overwrite subsequent edits")
+                with store.db() as db:
+                    _check_manual_attempt(db, sid, p["destination"], a)
                 work.append((a, token))
             for a, token in work:
                 # Block a new revision on a page with any unresolved prior application request.
@@ -371,6 +378,8 @@ def execute(store, sid, rid, *, human_clicked, direction="apply", client_factory
                         "proposed": a["proposed"] if direction == "apply" else a["current"]}
                 payload = {"object_id": a["object_id"], "request": body, "authorization_id": auth["id"]}
                 with store.db() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    _check_manual_attempt(db, sid, p["destination"], a)
                     db.execute("INSERT INTO cms_attempts VALUES (?,?,?,?,?,?,?,?,?)", (identity, sid, rid, a["action_id"], a["revision"], direction, utc_now(), t.canonical(payload), key))
                 attempt = record(store, sid, "cms_attempts", identity)
                 sent = False
@@ -457,6 +466,8 @@ def resume(store, sid, attempt_id, *, human_clicked, client_factory=WordPress):
                 raise ValueError("Unknown server receipt format; do not retry")
             if proven_result(store, sid, attempt_id):
                 raise ValueError("This request already succeeded; server journal loss cannot authorize publishing it again")
+            with store.db() as db:
+                _check_manual_attempt(db, sid, p["destination"], a)
             if attempt["direction"] == "apply":
                 check_action(store, sid, p, a)
                 existing = [r for r in t.rows(store, "implementation_receipts", sid) if r["payload"]["attempt_id"] == attempt_id]

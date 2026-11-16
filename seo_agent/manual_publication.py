@@ -1,5 +1,6 @@
 """Manual page-title handoff and reporting using the existing approval journal."""
 from . import page_tracking, tracking
+from .coordination import run_lock, workspace_lock
 from .storage import new_id, utc_now
 
 
@@ -40,7 +41,8 @@ def begin(store, sid, bid, *, preflight_confirmed, source):
     frozen, approval = context(store, sid, bid)
     if preflight_confirmed is not True or not source.strip():
         raise ValueError("Confirm current CMS evidence, scope and the preserved baseline before opening the editor")
-    return _receipt(store, sid, frozen, approval, new_id(), "attempted", "Manual operator preflight · " + source.strip())
+    with run_lock(workspace_lock(store.root)):
+        return _receipt(store, sid, frozen, approval, new_id(), "attempted", "Manual operator preflight · " + source.strip())
 
 
 def report(store, sid, bid, *, outcome, source, occurred, partial_value=None):

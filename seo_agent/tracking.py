@@ -407,7 +407,7 @@ class Receipt(StrictModel):
     corrects: str | None = Field(pattern=ID_PATTERN)
 
 
-def _unreconciled_title_attempt(db, sid, page_id, url):
+def unreconciled_title_attempt(db, sid, page_id, url):
     receipts = db.execute("""
         SELECT i.payload FROM implementation_receipts AS i
         JOIN tracking_actions AS a
@@ -422,6 +422,22 @@ def _unreconciled_title_attempt(db, sid, page_id, url):
         event = json.loads(row[0])
         attempts[event["attempt_id"]] = event["outcome"]
     return any(outcome not in {"verification", "manual_reconciliation"} for outcome in attempts.values())
+
+
+def _unreconciled_automated_attempt(db, sid, page_id, url):
+    events = db.execute("""
+        SELECT (SELECT e.payload FROM cms_events AS e
+                WHERE e.site_id = i.site_id AND e.attempt_id = i.id ORDER BY e.rowid DESC LIMIT 1)
+        FROM cms_attempts AS i
+        JOIN cms_reviews AS r ON r.site_id = i.site_id AND r.id = i.review_id
+        WHERE i.site_id = ? AND json_extract(r.payload, '$.destination.environment') = 'production'
+          AND (json_extract(i.payload, '$.object_id') = ? OR json_extract(i.payload, '$.request.url') = ?)
+    """, (sid, page_id, url))
+    for row in events:
+        event = json.loads(row[0]) if row[0] else {}
+        if event.get("write") != "not_sent" and event.get("verification") != "passed":
+            return True
+    return False
 
 
 def record_receipt(store, sid, raw, *, manual_operator=False):
@@ -496,8 +512,10 @@ def record_receipt(store, sid, raw, *, manual_operator=False):
                 if mapping := a["payload"].get("manual_post_title"):
                     if manual_operator is not True:
                         raise ValueError("Start a manual title attempt using the app's explicit CMS preflight")
-                    if _unreconciled_title_attempt(db, sid, mapping["page_id"], a["payload"]["url"]):
+                    if unreconciled_title_attempt(db, sid, mapping["page_id"], a["payload"]["url"]):
                         raise ValueError("Reconcile the earlier manual attempt for this WordPress page before starting another")
+                    if _unreconciled_automated_attempt(db, sid, mapping["page_id"], a["payload"]["url"]):
+                        raise ValueError("Reconcile the earlier automated attempt for this WordPress page before starting a manual update")
                     if any(v["environment"] == "production" for v in all_receipts):
                         raise ValueError("This manual revision already has a production attempt; use a new reviewed revision")
                 if any(v["outcome"] == "reported_applied" and v["approval_id"] == r["approval_id"] for v in scoped_receipts):
@@ -526,7 +544,7 @@ def record_receipt(store, sid, raw, *, manual_operator=False):
                     raise ValueError("Manual verification requires independent public evidence after the reported publication time")
         elif r["outcome"] == "manual_reconciliation":
             if (manual_operator is not True or r["environment"] != "production" or not a["payload"].get("manual_post_title")
-                    or prior[-1]["outcome"] in {"attempted", "verification", "manual_reconciliation"}
+                    or prior[-1]["outcome"] in {"attempted", "manual_reconciliation"}
                     or r["actual"] is None or r["corrects"]):
                 raise ValueError("Manual reconciliation requires a prior result and current read-only title evidence")
         elif r["outcome"] == "correction":

@@ -173,3 +173,17 @@ class ManualPublicationTests(TrackingFixture, unittest.TestCase):
         m.report(self.store, self.sid, bid, outcome="failed", occurred=utc_now(), source="Synthetic unknown result")
         m.reconcile(self.store, self.sid, bid, scope_checked=True, actual=self.before, source="Synthetic read-only CMS state")
         self.assertEqual(t.rows(self.store, "implementation_receipts", self.sid)[-1]["payload"]["outcome"], "manual_reconciliation")
+
+    def test_raw_cms_reconciliation_can_follow_matching_public_html(self):
+        bid = self.freeze()
+        self.approve(bid)
+        m.begin(self.store, self.sid, bid, preflight_confirmed=True, source="Synthetic preflight")
+        m.report(self.store, self.sid, bid, outcome="reported_applied", occurred=utc_now(), source="Synthetic operator")
+        snapshot = self.capture(self.after)
+        m.verify(self.store, self.sid, bid)
+        m.reconcile(self.store, self.sid, bid, scope_checked=True, actual=self.before, source="Synthetic raw CMS discrepancy")
+        frozen, approval = m.context(self.store, self.sid, bid)
+        events = m.history(self.store, self.sid, frozen, approval)
+        self.assertEqual(events[-2]["verification_snapshot_id"], snapshot)
+        self.assertEqual(events[-1]["actual"], self.before)
+        self.assertEqual(events[-1]["outcome"], "manual_reconciliation")

@@ -2,8 +2,9 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from seo_agent import publishing as p, tracking as t
+from seo_agent import manual_publication as manual, page_tracking, publishing as p, tracking as t
 from seo_agent.backup import _backup, _restore
+from seo_agent.storage import new_id
 from seo_agent.wordpress import CMSFailure, PROTOCOL, bind_public_target, rendered
 from tests.test_tracking import TrackingFixture
 from tests import test_tracking
@@ -86,6 +87,49 @@ class PublishingTests(TrackingFixture, unittest.TestCase):
 
     def apply(self, rid, **kwargs):
         return p.execute(self.store, self.sid, rid, human_clicked=True, client_factory=self.factory, **kwargs)
+
+    def manual_batch_for_same_page(self):
+        value = self.record["payload"]
+        html = page_tracking.latest_snapshot(self.store, self.sid, value["url"])["payload"]["html"]
+        self.html_snapshot(html.replace("<body>", '<body data-elementor-id="3" data-elementor-type="wp-page">')
+                           .replace("<main>", '<main data-id="abc1234" data-widget_type="heading.default">'))
+        identity = t.save_action(self.store, self.sid, self.aid, {**value, "action_id": new_id(), "manual_post_title": {
+            "page_id": 3, "widget_id": "abc1234", "source": "Synthetic CMS source", "shared_effects": "Synthetic shared effects",
+        }})
+        bid = t.freeze_batch(self.store, self.sid, [(identity, 1)])
+        t.approve_from_human_ui(self.store, self.sid, bid, human_clicked=True,
+                                statement="I approve this exact publication batch", confirmation_source="Synthetic owner")
+        return bid
+
+    def test_unresolved_manual_attempt_blocks_automated_production_write(self):
+        rid = self.ready()
+        bid = self.manual_batch_for_same_page()
+        manual.begin(self.store, self.sid, bid, preflight_confirmed=True, source="Synthetic preflight")
+        with self.assertRaisesRegex(ValueError, "Reconcile the earlier manual attempt"):
+            self.apply(rid)
+        self.assertEqual(self.client.writes, [])
+        self.assertFalse(p.rows(self.store, self.sid, "cms_attempts"))
+
+    def test_uncertain_automated_request_blocks_manual_production_attempt(self):
+        rid = self.ready()
+        bid = self.manual_batch_for_same_page()
+        self.client.reject = True
+        attempt = self.apply(rid)[0]
+        self.assertEqual(p.latest_event(self.store, self.sid, attempt["id"])["write"], "uncertain")
+        with self.assertRaisesRegex(ValueError, "Reconcile the earlier automated attempt"):
+            manual.begin(self.store, self.sid, bid, preflight_confirmed=True, source="Synthetic preflight")
+
+    def test_unresolved_manual_attempt_blocks_an_automated_resume(self):
+        rid = self.ready()
+        bid = self.manual_batch_for_same_page()
+        self.client.bad_render = True
+        attempt = self.apply(rid)[0]
+        self.assertEqual(p.latest_event(self.store, self.sid, attempt["id"])["write"], "not_sent")
+        manual.begin(self.store, self.sid, bid, preflight_confirmed=True, source="Synthetic preflight")
+        self.client.bad_render = False
+        with self.assertRaisesRegex(ValueError, "Reconcile the earlier manual attempt"):
+            p.resume(self.store, self.sid, attempt["id"], human_clicked=True, client_factory=self.factory)
+        self.assertEqual(self.client.writes, [])
 
     def test_success_duplicate_click_and_receipt(self):
         rid = self.ready()
