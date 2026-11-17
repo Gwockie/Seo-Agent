@@ -78,6 +78,8 @@ def main():
     receipt.add_argument('file', type=Path)
     refresh = sub.add_parser('tracking-refresh', help='Bounded read-only selected-site page check and daily-source import')
     refresh.add_argument('--site-id', required=True)
+    verification = sub.add_parser('publication-verification', help='Compare exact saved captures against declared public effects')
+    verification.add_argument('expectations', type=Path)
     for name in ("weekly-worker", "weekly-collect", "weekly-run-now", "weekly-task-preview", "weekly-task-apply"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--installation", type=Path, required=True)
@@ -137,6 +139,14 @@ def main():
         from .backup import restore
         restore(args.archive, args.new_workspace)
         print('Workspace restored. Google connections are detached; reconnect explicitly on this machine.')
+        return 0
+    if args.command == 'publication-verification':
+        from .publication_verification import report
+        from .tracking import load_document, MAX_DOCUMENT
+        with args.expectations.open('rb') as source:
+            declaration = load_document(source.read(MAX_DOCUMENT + 1))
+        store = Store(args.workspace, enforce_protection=True, read_only=True)
+        print(json.dumps(report(store, declaration), indent=2))
         return 0
     from .storage import credential_location
     secrets = credential_location(args.secrets)

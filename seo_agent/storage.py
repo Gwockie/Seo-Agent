@@ -214,10 +214,21 @@ def migrate_publication_attempts(db):
 
 
 class Store:
-    def __init__(self, root: Path, *, legacy_root: Path | None = None, enforce_protection=False, already_locked=False):
+    def __init__(self, root: Path, *, legacy_root: Path | None = None, enforce_protection=False, already_locked=False,
+                 read_only=False):
         self.enforce_protection = enforce_protection
+        self.read_only = read_only
         self.root = private_location(root)
         self.initial_protection = None
+        self.legacy_root = (legacy_root or Path(__file__).resolve().parent.parent).resolve()
+        self.db_path = child_path(self.root, "app.sqlite")
+        if read_only:
+            if self.enforce_protection:
+                from .protection import require_protected
+                self.initial_protection = require_protected(self.root)
+            if not self.db_path.is_file():
+                raise ValueError("Read-only access requires an existing workspace database")
+            return
         existed = self.root.exists()
         if self.enforce_protection:
             from .protection import require_protected, existing_ancestor
@@ -227,8 +238,6 @@ class Store:
         if self.enforce_protection and not existed:
             # A newly created root needs its own check before database creation.
             self.initial_protection = require_protected(self.root)
-        self.legacy_root = (legacy_root or Path(__file__).resolve().parent.parent).resolve()
-        self.db_path = child_path(self.root, "app.sqlite")
         # Read-only fast path for current workspaces; never migrate ahead of the gate.
         current = False
         if self.db_path.exists():
@@ -244,13 +253,18 @@ class Store:
                     db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + TRACKING_SCHEMA + SCHEDULING_SCHEMA + EVALUATION_SCHEMA + PUBLISHING_SCHEMA + DISCOVERY_SCHEMA + "\nCOMMIT;")
 
     def require_private_write(self):
+        if self.read_only:
+            raise ValueError("The workspace was opened read-only")
         if self.enforce_protection:
             from .protection import require_protected
             require_protected(self.root)
 
     @contextmanager
     def db(self):
-        db = sqlite3.connect(self.db_path, timeout=10)
+        if self.read_only:
+            db = sqlite3.connect(f"{self.db_path.as_uri()}?mode=ro", uri=True, timeout=10)
+        else:
+            db = sqlite3.connect(self.db_path, timeout=10)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
         try:

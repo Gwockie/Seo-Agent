@@ -112,6 +112,9 @@ staging; publishing or affecting production requires exact approval under the
 [WordPress publisher](docs/wordpress-publishing.md) supports only explicitly mapped,
 human-approved core heading changes and starts disabled.
 
+Use the [publication verification report](docs/publication-verification.md) to
+compare explicitly expected public effects against saved before and after captures.
+
 CTR is calculated from total clicks/impressions; aggregate position is impression
 weighted within the same dataset. Property totals are separate from query/page
 metrics. Final web data uses Pacific reporting dates with a three-day default lag.
