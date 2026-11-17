@@ -11,9 +11,22 @@ from seo_agent import publication_verification as pv
 from seo_agent.page_tracking import extract
 from seo_agent.storage import utc_now
 from seo_agent.protection import require_protected
+from bs4 import BeautifulSoup
+from scope import PATHS, CURRENT, PROPOSED, HOME, validate_scope, save_forward
 
-PATHS = ('/psychological-assessments-paoli/', '/contact-us/')
-PROPOSED = 'Synthetic Local Title Rehearsal 20261117'
+
+def baseline_document_titles():
+    titles = []
+    for index in range(len(PATHS)):
+        soup = BeautifulSoup((PRIVATE/f'before-{index}-raw.html').read_bytes().decode('utf-8'), 'html.parser')
+        nodes = soup.select('head > title')
+        need(len(nodes) == 1, 'Exactly one baseline document title required')
+        titles.append(nodes[0].get_text())
+    return titles
+
+
+def load_scope():
+    return validate_scope(json.loads((PRIVATE/'scope.json').read_text()), document_titles=baseline_document_titles())
 
 
 class Backend:
@@ -66,9 +79,11 @@ print(json.dumps({'http_status':r.status,'headers':dict(r.getheaders()),'body':b
 
 
 def compare(before_label, after_label, *, current, proposed, reverse=False):
-    declaration = json.loads((PRIVATE/'scope.json').read_text())
+    declaration = load_scope()
     left = json.loads((PRIVATE/(before_label+'-captures.json')).read_text())['pages']
     right = json.loads((PRIVATE/(after_label+'-captures.json')).read_text())['pages']
+    need([page['url'] for page in left] == [HOME+path for path in PATHS] and
+         [page['url'] for page in right] == [HOME+path for path in PATHS], 'Capture URLs differ from the fixed scope')
     result = []
     for index, page in enumerate(declaration['pages']):
         before = (PRIVATE/f'{before_label}-{index}-sanitized.html').read_bytes()
@@ -143,7 +158,8 @@ elif phase == 'forward':
     baseline = json.loads((PRIVATE/'baseline-title.json').read_text())
     need((PRIVATE/'scope.json').exists(), 'Explicit reviewed scope required before mutation')
     need((PRIVATE/'preflight.json').exists(), 'Local service guards and credential screen required before mutation')
-    result = transition(backend, PRIVATE, 'forward', expected=baseline['title'], replacement=PROPOSED)
+    need(baseline['title'] == CURRENT, 'Raw baseline title differs from the fixed test contract')
+    result = save_forward(backend, PRIVATE, load_scope(), document_titles=baseline_document_titles())
     print(json.dumps(result))
     need(result['outcome'] == 'applied', 'Forward save not confirmed; do not retry')
     capture('after')

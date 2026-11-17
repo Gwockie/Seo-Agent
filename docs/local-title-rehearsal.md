@@ -53,6 +53,14 @@ instances; its H1 and document title should remain unchanged. Canonical, robots
 metadata and `X-Robots-Tag` should remain unchanged on both pages. An absent
 Googlebot metadata field is unavailable rather than a confirmed unchanged value.
 Other pages, save hooks, caches, scripts and browser behavior are outside this scope.
+All four navigation instances belong to the literal capture comparison. The raw
+publication verifier checks the two visible main-menu instances; it treats hidden
+dropdown ancestors as unavailable. Dropdown text remains explicitly checked by the
+literal verifier, without changing the publication verifier's static-body semantics.
+The historical sanitizer's URL allowlist also omits port `18718`, so these retained
+sanitized captures have no local link destinations. Literal rules bind exact menu
+and item identities; visible raw rules additionally bind the full destinations.
+Hidden dropdown destination attributes are outside the supported raw checks.
 
 ## Narrow implementation
 
@@ -65,6 +73,14 @@ uses only existing pinned images. It does not collect source or rebuild hosting.
 verification. The forward phase requires saved preflight and explicit scope files.
 The blocked preflight is not present, so a forward invocation refuses to write.
 Do not fabricate that prerequisite to bypass the unresolved environment condition.
+
+The scope validator requires exactly the two fixed URLs in capture order and the
+complete fixed selectors, values and effect kinds above. Both effect lists must
+be nonempty. It rejects omitted, duplicated, additional or altered checks before
+calling the save backend; comparison revalidates scope and capture URLs. Empty
+declarations cannot produce a successful report. `expected_scope` documents the
+exact JSON contract using the two original captured document titles. This is a
+bounded declaration for these two pages, not a claim of complete site coverage.
 
 `save-title.php` is mounted outside the web root and accepts only read/save for
 the fixed page. It checks exact local instance, database, prefix, URL and isolation
@@ -100,6 +116,9 @@ intervening-title refusal, lost replies before/after a possible write, unreadabl
 reconciliation, pending-attempt retry refusal, explicit API failure and invalid
 attempt names. Existing title-effect and publication-verification tests run with
 them. Their success validates the journal logic, not the unperformed WordPress save.
+Scope tests additionally confirm empty, missing, extra and reordered pages, empty
+effect lists, omitted or duplicate checks, changed selectors/values and unsupported
+rule types are rejected before any backend read or write.
 
 Current SiteGround compatibility, production caches and complete save-hook/effect
 coverage remain explicitly unproven. Publication and production-impacting actions
