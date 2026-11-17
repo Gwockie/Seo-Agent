@@ -132,6 +132,18 @@ class PublicationVerificationTests(TrackingFixture, unittest.TestCase):
             with self.subTest(declaration=declaration), self.assertRaises(ValueError):
                 report(self.store, declaration)
 
+    def test_selector_cannot_switch_between_unchanged_elements(self):
+        body = '<main data-state="{}"><h1 id="old">Old</h1><h1 id="new">New</h1></main>'
+        before = self.capture(self.url, "Fixture", 1, body=body.format("before"))
+        after = self.capture(self.url, "Fixture", 2, body=body.format("after"))
+        effect = {"kind": "heading", "selector": '[data-state="before"] #old, [data-state="after"] #new',
+                  "before": "Old", "after": "New"}
+        result = report(self.store, self.declaration(before, after, [effect]))["pages"][0]["effects"][0]
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["before"]["value"], "Old")
+        self.assertEqual(result["after"]["value"], "New")
+        self.assertIn("different element locations", result["reason"])
+
     def test_cli_uses_existing_database_read_only(self):
         before, after = self.capture(self.url, "Old", 1), self.capture(self.url, "New", 2)
         declaration = self.declaration(before, after, [

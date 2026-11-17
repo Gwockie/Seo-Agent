@@ -40,7 +40,9 @@ when you expect it to stay the same.
 ```
 
 Use a CSS selector that resolves to exactly one static body element in each
-capture. Use an `h1`–`h6` element for a heading. Text comparisons preserve
+capture. Use an `h1`–`h6` element for a heading. The report checks
+the selected element's body path and attributes across captures. Changes to
+that location evidence leave the pair unavailable. Text comparisons preserve
 case and collapse presentation whitespace. Canonical values are the captured
 `href` strings, so declare a relative value as relative if that is what the
 page emits. Directive values are compared as captured. An explicitly saved

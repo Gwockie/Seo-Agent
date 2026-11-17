@@ -101,6 +101,19 @@ def _inert(node):
             or node.get("aria-hidden", "").casefold() == "true")
 
 
+def _location(node):
+    """Bind a selected text element to its saved body path and attributes."""
+    path = []
+    while node.name != "body":
+        siblings = node.parent.find_all(True, recursive=False)
+        path.append({"tag": node.name, "attributes": dict(node.attrs),
+                     "index": next(index for index, sibling in enumerate(siblings) if sibling is node),
+                     "siblings": [sibling.name for sibling in siblings]})
+        node = node.parent
+    path.append({"tag": "body", "attributes": dict(node.attrs)})
+    return list(reversed(path))
+
+
 def _observe(source, reason, effect):
     if source is None:
         return {"value": None, "reason": reason}
@@ -130,7 +143,7 @@ def _observe(source, reason, effect):
                 or _inert(node) or any(_inert(parent) for parent in node.parents)
                 or node.find(_inert)):
             return {"value": None, "reason": "Declared element has no unambiguous static body text"}
-        return {"value": text_value(node.get_text()), "tag": node.name}
+        return {"value": text_value(node.get_text()), "location": _location(node)}
     if node.parent is not soup.head:
         return {"value": None, "reason": "Expected the declared metadata in the document head"}
     if effect.kind == "document_title":
@@ -147,8 +160,8 @@ def _observe(source, reason, effect):
 
 def _compare(effect, before, after, pair_reason):
     if pair_reason is None and before["value"] is not None and after["value"] is not None:
-        if before.get("tag") != after.get("tag"):
-            pair_reason = "The selector resolved to different element types"
+        if before.get("location") != after.get("location"):
+            pair_reason = "The selector resolved to different element locations or attributes"
         else:
             matched = (before["value"], after["value"]) == (effect.before, effect.after)
             status = "matches_expectation" if matched else "mismatch"
