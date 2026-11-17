@@ -58,3 +58,28 @@ digests. The command reads saved HTML and headers only. It performs no network
 requests or journal writes. Its results describe static public evidence within
 the declared scope. Browser behavior, Google indexing, CMS state, authorship
 and publication authorization remain outside that scope.
+
+## In-app screen
+
+Select the site in the sidebar, then open **Publication verification**. Enter each
+exact page URL, select its before and after captures, and enter the expected effects.
+The capture choices show IDs, UTC capture times and saved source status. Neither
+capture is selected automatically. Increase the page/effect counts to add explicit
+scope; reduce them to remove entries. Shared effects on other pages must be declared
+separately. No completeness of shared scope is inferred.
+
+Import the same JSON format using a file or pasted JSON, or download the current
+validated form as expectations JSON. Imports for a different site are rejected.
+Missing imported capture references stay explicit and are reported as unavailable;
+they are never replaced with a newer capture. Run the read-only verifier to see
+expected and observed values grouped by URL, including explanations for unavailable
+comparisons. The report download contains the verifier's exact capture references,
+record digests and expectations digest. Editing the form hides the prior result and
+its download until the verifier runs again.
+
+The form and report live only in the current app session. Site switching clears the
+previous site's form and report. Download any evidence you need to retain. This
+screen reads saved captures through a read-only store, does not refresh tracking,
+and does not save approvals, receipts, reconciliation or rollback records. A match
+is evidence within the declared static scope, not publication permission or a
+verified CMS receipt.

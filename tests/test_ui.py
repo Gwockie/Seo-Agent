@@ -65,6 +65,25 @@ class UITests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual([box for box in app.selectbox if box.label == "Industry"][0].value, "general")
 
+    def test_publication_verification_navigation_skips_tracking_and_clears_other_site_state(self):
+        with patch("seo_agent.tracking_ui.controls") as controls:
+            app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+            app.sidebar.selectbox[0].select(self.ids["Demo psychology A"]).run()
+            controls.reset_mock()
+            app.sidebar.radio[0].set_value("Publication verification").run()
+            self.assertFalse(app.exception)
+            controls.assert_not_called()
+            self.assertTrue(any(s.value == "Publication verification" for s in app.subheader))
+            first = self.ids["Demo psychology A"]
+            app.session_state[first + ":publication_verification:result"] = {"synthetic": True}
+            app.sidebar.selectbox[0].select(self.ids["Demo electrician"]).run()
+            self.assertFalse(app.exception)
+            controls.assert_not_called()
+            self.assertNotIn(first + ":publication_verification:result", app.session_state)
+            text = " ".join(t.value for t in app.text)
+            self.assertIn("electrician.example", text)
+            self.assertNotIn("psychology-a.example", text)
+
     def test_guided_setup_rows_and_save_preserve_existing_settings(self):
         from streamlit import config as streamlit_config
         sid = self.ids["Demo psychology A"]
