@@ -68,7 +68,9 @@ def settings_ui(store, sid):
                     st.error("Settings rejected; use exact selected-site URLs and bounded values.")
         captures = tracking.rows(store, "public_snapshots", sid)[-40:]
         if captures:
-            st.dataframe(spreadsheet_frame(pd.DataFrame([{k: r[k] for k in ("url", "checked", "status")} for r in captures])), hide_index=True)
+            st.dataframe(spreadsheet_frame(pd.DataFrame([
+                {"snapshot_id": r["id"], "url": r["url"], "checked": r["checked"], "status": r["status"]}
+                for r in captures])), hide_index=True)
             with st.expander("Source limits / check failures"):
                 for r in captures:
                     st.text(r["url"] + " · " + r["checked"] + "\n" + r["payload"].get("reason", r["payload"].get("values", {}).get("limits", "")))
