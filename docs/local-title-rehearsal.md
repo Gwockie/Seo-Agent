@@ -38,6 +38,15 @@ sanitized captures, plus the final blocker/resource record. Copied source, secre
 and private captures are excluded from Git. The final evidence seal binds the
 reviewed commit separately, avoiding a self-referential commit hash.
 
+## Credential-screening follow-up
+
+The installed Rank Math vendor source, `wp-content/plugins/seo-by-rank-math/vendor/wp-media/mcp-oauth/inc/Auth/SecretManager.php`, declares the exact top-level `mcp_jwt_secret` option as its 256-bit OAuth JWT signing key. Its generator stores lowercase hex. `inc/Bootstrap.php` runs its initializer on WordPress init. The follow-up therefore clears the verified scalar in the disposable copy via `update_option` and retains the empty row. The installed initializer's `add_option` cannot replace an existing empty row. The next preflight boots WordPress independently and verifies the empty option.
+
+Use a protected `credential-screening-resume` subdirectory of the existing private rehearsal evidence directory. Use `run.py preflight` to retain the redacted rejection. Only the exact signing-option rejection permits the explicit `run.py sanitize` phase. It checks the retained runtime and source manifests, journals the attempt, validates the stored scalar's shape and reads back the empty row. If its response is uncertain, reconcile the row before proceeding. Repeat `preflight` for a fresh screen after sanitization, then capture the new baseline and derive the fixed scope from its two document titles. Keep the parent evidence and preparation untouched.
+
+The historical option screen still decides pass or fail over the same option input. Failure diagnostics use an allowlisted name for the verified static option and positional paths for dynamic keys. The screen covers the documented keys and credential shapes within options, along with the separately checked core format and rewrite grammar. It cannot establish that every field or storage location is free of credentials.
+
+
 ## Prepared scope, not applied
 
 The sole intended test target is WordPress page `716`,
