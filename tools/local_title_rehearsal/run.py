@@ -1,10 +1,12 @@
 """Explicit stages for one title-only local rehearsal; retained evidence is exclusive."""
 import importlib.util
 import json
+import re
+import subprocess
 import sys
 from hashlib import sha256
 
-from runtime import HERE, OLD, PRIVATE, PROJECT, docker, inspect_baseline, inspect_runtime, need, record, clone
+from runtime import HERE, OLD, PRIVATE as RUNTIME_PRIVATE, PROJECT, docker, inspect_baseline, inspect_runtime, need, clone, verify_historical_config
 from seo_agent.local_title_rehearsal import transition
 from seo_agent.post_title_effects import TitleEffect, verify_title_effects
 from seo_agent import publication_verification as pv
@@ -13,6 +15,101 @@ from seo_agent.storage import utc_now
 from seo_agent.protection import require_protected
 from bs4 import BeautifulSoup
 from scope import PATHS, CURRENT, PROPOSED, HOME, validate_scope, save_forward
+from screening import SIGNING_OPTION, SIGNING_REJECTION, ScreeningRejected, screen_options
+
+
+PRIVATE = RUNTIME_PRIVATE / 'credential-screening-resume'
+
+
+def record(name, data):
+    with (PRIVATE / (name + '.json')).open('x', encoding='utf-8') as stream:
+        json.dump(data, stream, indent=2)
+
+
+def inspect_retained_runtime():
+    runtime = inspect_runtime()
+    retained = json.loads((RUNTIME_PRIVATE/'running-isolation.json').read_text())
+    need(runtime == retained, 'Disposable runtime identity differs from the retained rehearsal')
+    return runtime
+
+
+def preflight_command(*, sanitize=False):
+    inspect_retained_runtime()
+    env = ['-e', 'LSEO_TITLE_SANITIZE=1' if sanitize else 'LSEO_TITLE_SANITIZE=0']
+    # Keep raw option input in process memory. The usual Docker failure logger
+    # would retain partial stdout on error, so this command has a fixed error.
+    try:
+        process = subprocess.run(
+            ['docker', 'exec', '-i', *env, PROJECT+'-app', 'php',
+             '-d', 'display_errors=0', '-d', 'log_errors=0'],
+            input=(HERE/'preflight.php').read_bytes(), capture_output=True, timeout=90,
+        )
+        process.check_returncode()
+        return json.loads(process.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        raise ValueError('Local service preflight command failed without a usable response') from None
+
+
+def preflight():
+    verify_historical_config()
+    data = preflight_command()
+    sys.path.insert(0, str(OLD))
+    from screen import inspect as historical_inspect, loads
+    from inert_serialized import parse
+    # Validate the same two core formats/routes separately from the historical parser.
+    options = {row['option_name']: row['option_value'] for row in data.pop('options')}
+    need(options.pop('time_format', None) in ('H:i', 'g:i a'), 'Unexpected time format')
+    routes = options.pop('rewrite_rules', None)
+    need(isinstance(routes, dict) and len(routes) < 1000 and all(
+        isinstance(key, str) and len(key) < 1000 and isinstance(value, str) and
+        re.fullmatch(r'index\.php\?[A-Za-z0-9_=&$\[\]/.%-]+', value)
+        for key, value in routes.items()), 'Unexpected rewrite rule destination')
+    try:
+        screened = screen_options(options, historical_inspect, parse, loads)
+    except ScreeningRejected as exc:
+        suffix = '-after-sanitize' if (PRIVATE/'sanitization-attempt.json').exists() else ''
+        record('screening-rejection'+suffix, {'observed_utc': utc_now(), **exc.diagnostic})
+        print(json.dumps(exc.diagnostic))
+        raise SystemExit('Historical options screen rejected the input') from None
+    need(options.get(SIGNING_OPTION) == '', 'Expected an existing empty signing option')
+    try:
+        document = json.loads(data.pop('elementor_data'))
+    except ValueError:
+        raise ValueError('Invalid representative heading data') from None
+    selected = []
+
+    def walk(nodes):
+        for node in nodes:
+            if node.get('id') == '022c973':
+                selected.append(node)
+            walk(node.get('elements', []))
+
+    walk(document)
+    need(len(selected) == 1, 'Ambiguous representative heading source')
+    binding = selected[0]['settings'].get('__dynamic__', {}).get('title', '')
+    need('name="post-title"' in binding and 'settings="%7B%7D"' in binding,
+         'Heading does not use expected Post Title binding')
+    record('preflight', {**data, 'options_screening': screened, 'signing_option_empty': True,
+                         'post_title_binding_verified': True, 'observed_utc': utc_now()})
+
+
+def sanitize():
+    verify_historical_config()
+    rejection = json.loads((PRIVATE/'screening-rejection.json').read_text())
+    need(all(rejection.get(key) == value for key, value in SIGNING_REJECTION.items()),
+         'This operation requires the exact observed signing-option rejection')
+    need(not any((PRIVATE/name).exists() for name in
+                 ('preflight.json', 'baseline-title.json', 'forward-attempt.json', 'restore-attempt.json')),
+         'Sanitization must precede the passing preflight, baseline and title attempts')
+    baseline = inspect_baseline()
+    clone_record = json.loads((RUNTIME_PRIVATE/'clone.json').read_text())
+    need(baseline == clone_record['baseline'] and clone('manifest') == clone_record['source_manifest'],
+         'Preserved baseline differs from the retained clone record')
+    operation = {'location': ['options', SIGNING_OPTION], 'operation': 'clear_existing_scalar_with_update_option'}
+    record('sanitization-attempt', {**operation, 'observed_utc': utc_now()})
+    outcome = preflight_command(sanitize=True)
+    need(outcome == {'signing_option_cleared': True}, 'Sanitization was not confirmed; reconcile before proceeding')
+    record('sanitization-result', {**operation, **outcome, 'observed_utc': utc_now()})
 
 
 def baseline_document_titles():
@@ -31,7 +128,7 @@ def load_scope():
 
 class Backend:
     def call(self, payload):
-        inspect_runtime()
+        inspect_retained_runtime()
         raw = docker('exec', '-i', PROJECT+'-app', 'php', '/opt/lseo/save-title.php',
                      input=json.dumps(payload).encode(), timeout=90)
         return json.loads(raw)
@@ -44,7 +141,7 @@ class Backend:
 
 
 def capture(label):
-    inspect_runtime()
+    inspect_retained_runtime()
     spec = importlib.util.spec_from_file_location('reviewed_preview', OLD/'preview_proxy.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -88,8 +185,13 @@ def compare(before_label, after_label, *, current, proposed, reverse=False):
     for index, page in enumerate(declaration['pages']):
         before = (PRIVATE/f'{before_label}-{index}-sanitized.html').read_bytes()
         after = (PRIVATE/f'{after_label}-{index}-sanitized.html').read_bytes()
-        strict = verify_title_effects(before, after, current=current, proposed=proposed,
-                                     effects=[TitleEffect(**v) for v in page['title_effects']])
+        try:
+            strict = verify_title_effects(before, after, current=current, proposed=proposed,
+                                          effects=[TitleEffect(**v) for v in page['title_effects']])
+        except ValueError as exc:
+            literal = {'status': 'failed', 'reason': str(exc)}
+        else:
+            literal = {'status': 'matches_expectation', **strict}
         sources = []
         for label, metadata in [(before_label, left[index]), (after_label, right[index])]:
             html = (PRIVATE/f'{label}-{index}-raw.html').read_bytes().decode('utf-8')
@@ -108,51 +210,25 @@ def compare(before_label, after_label, *, current, proposed, reverse=False):
             effect = pv.Effect.model_validate(values)
             checked = pv._compare(effect, pv._observe(*sources[0], effect), pv._observe(*sources[1], effect), None)
             effects.append(checked)
-        result.append({'url': page['url'], 'literal_title_effects': strict, 'publication_effects': effects})
+        result.append({'url': page['url'], 'literal_title_effects': literal, 'publication_effects': effects})
     record(before_label+'-to-'+after_label+'-verification', {'pages': result})
-    need(all(effect['status'] == 'matches_expectation' for p in result for effect in p['publication_effects']),
-         'Declared raw publication effect failed; inspect retained verification')
+    need(all(page['literal_title_effects']['status'] == 'matches_expectation' and all(
+        effect['status'] == 'matches_expectation' for effect in page['publication_effects']
+    ) for page in result), 'Declared rendered effect failed; inspect retained verification')
 
 
 phase = sys.argv[1] if len(sys.argv) == 2 else ''
-need(phase in {'preflight', 'baseline', 'forward', 'restore', 'verify'}, 'Choose an explicit rehearsal phase')
+need(phase in {'preflight', 'sanitize', 'baseline', 'forward', 'restore', 'verify'}, 'Choose an explicit rehearsal phase')
 require_protected(PRIVATE)
 backend = Backend()
 if phase == 'preflight':
-    inspect_runtime()
-    raw = docker('exec', '-i', PROJECT+'-app', 'php', input=(HERE/'preflight.php').read_bytes())
-    data = json.loads(raw)
-    # Historical inert parser rejects credential-shaped values and nonempty secret keys.
-    sys.path.insert(0, str(OLD))
-    from screen import inspect as screen
-    # These two core options are formats/routes, not PHP value containers.
-    # Validate their bounded grammar separately rather than weakening the inert parser.
-    options = {row['option_name']: row['option_value'] for row in data['options']}
-    import re
-    need(options.pop('time_format') in ('H:i', 'g:i a'), 'Unexpected time format')
-    routes = options.pop('rewrite_rules')
-    need(isinstance(routes, dict) and len(routes) < 1000 and all(
-        isinstance(key, str) and len(key) < 1000 and isinstance(value, str) and
-        re.fullmatch(r'index\.php\?[A-Za-z0-9_=&$\[\]/.%-]+', value)
-        for key, value in routes.items()), 'Unexpected rewrite rule destination')
-    screened = screen(options)
-    document = json.loads(data.pop('elementor_data'))
-    selected = []
-    def walk(nodes):
-        for node in nodes:
-            if node.get('id') == '022c973':
-                selected.append(node)
-            walk(node.get('elements', []))
-    walk(document)
-    need(len(selected) == 1, 'Ambiguous representative heading source')
-    binding = selected[0]['settings'].get('__dynamic__', {}).get('title', '')
-    need('name="post-title"' in binding and 'settings="%7B%7D"' in binding, 'Heading does not use expected Post Title binding')
-    data.pop('options')
-    record('preflight', {**data, 'options_screening': screened, 'post_title_binding': binding,
-                         'elementor_data_sha256': sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()})
+    preflight()
+elif phase == 'sanitize':
+    sanitize()
 elif phase == 'baseline':
+    need((PRIVATE/'preflight.json').exists(), 'Passing preflight required before baseline capture')
     record('baseline-title', {'title': backend.read(), 'proposed': PROPOSED,
-                             'runtime': inspect_runtime(), 'baseline': inspect_baseline()})
+                             'runtime': inspect_retained_runtime(), 'baseline': inspect_baseline()})
     capture('before')
 elif phase == 'forward':
     baseline = json.loads((PRIVATE/'baseline-title.json').read_text())
@@ -173,16 +249,19 @@ elif phase == 'restore':
     compare('after', 'restored', current=PROPOSED, proposed=baseline['title'], reverse=True)
 elif phase == 'verify':
     baseline = json.loads((PRIVATE/'baseline-title.json').read_text())
-    need(backend.read() == baseline['title'], 'Raw title differs from original')
+    raw_title_exact = backend.read() == baseline['title']
     exact = []
     for index, path in enumerate(PATHS):
         before = (PRIVATE/f'before-{index}-sanitized.html').read_bytes()
         restored = (PRIVATE/f'restored-{index}-sanitized.html').read_bytes()
-        need(before == restored, 'Sanitized restored capture differs from baseline')
-        exact.append({'path': path, 'sha256': sha256(before).hexdigest(), 'exact_restoration': True})
+        exact.append({'path': path, 'exact_restoration': before == restored})
     sources = clone('manifest')
-    need(sources == json.loads((PRIVATE/'clone.json').read_text())['source_manifest'], 'Preserved baseline volume changed')
-    need(inspect_baseline() == baseline['baseline'], 'Preserved baseline container changed')
-    record('restoration-verified', {'raw_title_exact': True, 'pages': exact, 'baseline_volume_manifests_unchanged': sources,
-                                    'runtime': inspect_runtime()})
+    source_unchanged = sources == json.loads((RUNTIME_PRIVATE/'clone.json').read_text())['source_manifest']
+    baseline_unchanged = inspect_baseline() == baseline['baseline']
+    record('restoration-verified', {'raw_title_exact': raw_title_exact, 'pages': exact,
+                                    'baseline_volume_manifests_unchanged': source_unchanged,
+                                    'baseline_containers_unchanged': baseline_unchanged,
+                                    'runtime': inspect_retained_runtime()})
+    need(raw_title_exact and source_unchanged and baseline_unchanged and
+         all(page['exact_restoration'] for page in exact), 'Restoration verification failed; inspect retained evidence')
 print(json.dumps({'phase': phase, 'status': 'completed'}))

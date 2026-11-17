@@ -94,17 +94,22 @@ def clone(mode):
     return json.loads(docker(*args, timeout=180))
 
 
+def verify_historical_config():
+    # Verify historical runtime files retain their independent review seal.
+    seal = json.loads((OLD / 'independent-review.json').read_text())
+    hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in OLD.iterdir()
+              if p.is_file() and p.suffix in ('.py', '.php', '.yml')}
+    need(seal['status'] == 'CLEAN' and seal['files'] == hashes, 'Historical reviewed configuration drift')
+    return hashes
+
+
 def prepare():
     require_protected(PRIVATE)
     require_protected(SECRETS)
     baseline = inspect_baseline()
     need(not docker('ps', '-aq', '--filter', 'name=^/' + PROJECT).strip(), 'Disposable containers already exist')
     need(not docker('volume', 'ls', '-q', '--filter', 'name=' + PROJECT + '_').strip(), 'Disposable volumes already exist')
-    # Verify historical runtime files retain their independent review seal.
-    seal = json.loads((OLD / 'independent-review.json').read_text())
-    hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in OLD.iterdir()
-              if p.is_file() and p.suffix in ('.py', '.php', '.yml')}
-    need(seal['status'] == 'CLEAN' and seal['files'] == hashes, 'Historical reviewed configuration drift')
+    hashes = verify_historical_config()
     for name in ('wp-config.php', 'isolation.php'):
         content = (OLD / name).read_text().replace('18717', '18718').replace(
             'meadow-representative-20261021-d0f5a2ec', 'title-rehearsal-20261117')
