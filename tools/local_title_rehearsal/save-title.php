@@ -4,6 +4,21 @@ $request = json_decode(stream_get_contents(STDIN), true, 32, JSON_THROW_ON_ERROR
 if (!in_array($request['operation'] ?? '', array('read', 'save'), true)) {
     throw new Exception('Unsupported operation');
 }
+// Guard before WordPress bootstraps. A delayed Docker exec from the old app
+// generation must fail even if it starts after a stop/start.
+$lock = fopen('/tmp/lseo-title-rehearsal.lock', 'c');
+if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) { throw new Exception('Writer already running'); }
+$boot = trim(file_get_contents('/proc/sys/kernel/random/boot_id'));
+$stat = file_get_contents('/proc/1/stat');
+$fields = explode(' ', substr($stat, strrpos($stat, ') ') + 2));
+$started = $fields[19] ?? '';
+if (!preg_match('/^[0-9a-f-]{36}$/D', $boot) || !ctype_digit($started)) {
+    throw new Exception('Unusable app generation');
+}
+$epoch = hash('sha256', $boot . ':' . $started);
+if ($request['operation'] === 'save' && ($request['writer_epoch'] ?? null) !== $epoch) {
+    throw new Exception('Writer belongs to a different app generation');
+}
 require '/var/www/html/wp-load.php';
 if (wp_get_environment_type() !== 'local' ||
     !defined('LSEO_LOCAL_INSTANCE') || LSEO_LOCAL_INSTANCE !== 'title-rehearsal-20261117' ||
@@ -15,16 +30,13 @@ $db = $wpdb->get_row('SELECT DATABASE() AS db, @@skip_networking AS offline, @@e
 if ($db['db'] !== 'meadow_rep' || (int)$db['offline'] !== 1 || $db['events'] !== 'DISABLED') {
     throw new Exception('Database isolation failed');
 }
-// Serialize this CLI's writers. The runtime has no browser/editor network route.
-$lock = fopen('/tmp/lseo-title-rehearsal.lock', 'c');
-if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) { throw new Exception('Writer already running'); }
 $id = 716;
 clean_post_cache($id);
 $post = get_post($id, ARRAY_A, 'raw');
 if (!$post || $post['post_type'] !== 'page' || $post['post_status'] !== 'publish' ||
     $post['post_name'] !== 'psychological-assessments-paoli') { throw new Exception('Wrong representative page'); }
 $title = $post['post_title'];
-$result = array('post_id'=>$id, 'title'=>$title, 'operation'=>$request['operation'], 'write_attempted'=>false);
+$result = array('post_id'=>$id, 'title'=>$title, 'operation'=>$request['operation'], 'write_attempted'=>false, 'epoch'=>$epoch);
 if ($request['operation'] === 'save') {
     if (!is_string($request['expected'] ?? null) || !is_string($request['replacement'] ?? null) ||
         $request['expected'] === $request['replacement'] || strlen($request['replacement']) > 500) {

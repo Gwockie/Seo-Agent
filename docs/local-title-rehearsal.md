@@ -4,12 +4,11 @@ This bounded engineering route is separate from the production publishers and
 the real site's proposals, approvals and receipts. It does not install a CMS
 endpoint, modify publisher certificates or authorize production use.
 
-## Observed result on November 17, 2026
+## Initial preflight block on November 17, 2026
 
-**The end-to-end title rehearsal was not attempted.** Resource setup and baseline
-capture worked, but credential preflight remained blocked after two focused
-attempts. No forward save or restoration was performed; no successful save,
-restoration, actual-stack certificate or complete title-effect coverage is claimed.
+Resource setup and baseline capture worked. Credential preflight remained blocked
+after two focused attempts, so the initial run ended before any Title save. The
+follow-up below records the later successful rehearsal.
 
 The preserved historical project `lseo-meadow-representative-20261021` remained
 stopped. Its site and database volumes were mounted read-only, hashed, copied to
@@ -27,9 +26,8 @@ rejected serialized plugin objects and core formats/routes. The second focused
 attempt decoded serialized values without instantiating classes, checked core
 format/route grammar separately, and still rejected a nonempty sensitive key.
 Screening was stopped without weakening the check or displaying credential values.
-Consequently the requirement to exclude production credentials is unresolved, and
-the title mutation remains blocked. The disposable services were stopped and their
-volumes retained for review. There is no automatic retry or follow-on task.
+The initial run stopped the disposable services and retained their volumes. Its
+credential rejection and blocker records remain historical evidence.
 
 Local evidence is under the ignored, access-restricted directory
 `.tmp/title-rehearsal-20261117/` in the attached worktree. It includes clone and
@@ -38,23 +36,31 @@ sanitized captures, plus the final blocker/resource record. Copied source, secre
 and private captures are excluded from Git. The final evidence seal binds the
 reviewed commit separately, avoiding a self-referential commit hash.
 
-## Credential-screening follow-up
+## Successful credential-screening follow-up in PR #28
 
 The installed Rank Math vendor source, `wp-content/plugins/seo-by-rank-math/vendor/wp-media/mcp-oauth/inc/Auth/SecretManager.php`, declares the exact top-level `mcp_jwt_secret` option as its 256-bit OAuth JWT signing key. Its generator stores lowercase hex. `inc/Bootstrap.php` runs its initializer on WordPress init. The follow-up therefore clears the verified scalar in the disposable copy via `update_option` and retains the empty row. The installed initializer's `add_option` cannot replace an existing empty row. The next preflight boots WordPress independently and verifies the empty option.
 
-Use a protected `credential-screening-resume` subdirectory of the existing private rehearsal evidence directory. Use `run.py preflight` to retain the redacted rejection. Only the exact signing-option rejection permits the explicit `run.py sanitize` phase. It checks the retained runtime and source manifests, journals the attempt, validates the stored scalar's shape and reads back the empty row. If its response is uncertain, reconcile the row before proceeding. Repeat `preflight` for a fresh screen after sanitization, then capture the new baseline and derive the fixed scope from its two document titles. Keep the parent evidence and preparation untouched.
+The follow-up retained the exact signing-option rejection, journaled the one-time
+sanitization and verified the existing empty row. An independent WordPress boot
+passed the credential screen and isolation probes. The rehearsal saved the
+synthetic Title, verified the two declared renders, restored the original raw
+Title and verified both restored renders. The historical baseline remained stopped
+with unchanged volume manifests. The disposable containers were stopped and their
+volumes retained. Keep the original preparation and the protected
+`credential-screening-resume/` evidence. Recovery reuses this evidence without
+repeating preparation or credential sanitization.
 
 The historical option screen still decides pass or fail over the same option input. Failure diagnostics use an allowlisted name for the verified static option and positional paths for dynamic keys. The screen covers the documented keys and credential shapes within options, along with the separately checked core format and rewrite grammar. It cannot establish that every field or storage location is free of credentials.
 
 
-## Prepared scope, not applied
+## Rehearsed scope
 
-The sole intended test target is WordPress page `716`,
+The sole test target is WordPress page `716`,
 `/psychological-assessments-paoli/`. Its raw Title was
-`Comprehensive Psychological Assessments`; the synthetic replacement would be
+`Comprehensive Psychological Assessments`; the synthetic replacement was
 `Synthetic Local Title Rehearsal 20261117`. It makes no factual business claim.
 
-The planned declarations cover the selected page's dynamic H1 in widget `022c973`,
+The declarations cover the selected page's dynamic H1 in widget `022c973`,
 breadcrumb label in widget `2be23dd`, document title and four navigation instances:
 header menu item `771` and footer menu item `801`, each in main/dropdown menus.
 The second declared page, `/contact-us/`, has those same four shared navigation
@@ -79,9 +85,9 @@ It verifies the historical runtime review seal and private-folder protection and
 uses only existing pinned images. It does not collect source or rebuild hosting.
 
 `run.py` separates preflight, baseline capture, forward save, restoration and final
-verification. The forward phase requires saved preflight and explicit scope files.
-The blocked preflight is not present, so a forward invocation refuses to write.
-Do not fabricate that prerequisite to bypass the unresolved environment condition.
+verification. The forward phase requires the retained passing preflight, original raw Title,
+historical baseline and complete fixed scope. The recovery journal lives in the
+protected `interruption-recovery/` directory beside the prior successful evidence.
 
 The scope validator requires exactly the two fixed URLs in capture order and the
 complete fixed selectors, values and effect kinds above. Both effect lists must
@@ -96,8 +102,8 @@ the fixed page. It checks exact local instance, database, prefix, URL and isolat
 settings. A local lock serializes this route's writers. A write checks the raw
 current Title, then calls normal `wp_update_post(wp_slash(...), true)` and reads the
 raw stored Title back. It does not substitute SQL or modify Elementor metadata.
-It is not a multi-writer transaction certificate; the disposable runtime must have
-no independent editors or writers.
+The disposable runtime must have no independent editors or writers. The write
+requires the app generation recorded by the controller.
 
 `seo_agent.local_title_rehearsal.transition` durably records an exclusive attempt
 before calling the backend. It reads actual state even after a lost response and
@@ -115,16 +121,74 @@ observation and comparison functions check the raw captures independently,
 including metadata. The regular report intentionally rejects private URLs; this
 local tool uses its same lower-level comparison semantics without creating app
 snapshot, approval or receipt records or changing that public-URL restriction.
-Restoration would require exact raw Title equality, reverse declared checks and
+Restoration verification requires exact raw Title equality, reverse declared checks and
 exact sanitized baseline bytes; unrelated timestamps/revision rows need not revert.
+
+## Recover an interrupted attempt
+
+Run from the attached rehearsal checkout with the repository's Python dependencies
+available and the repository root on `PYTHONPATH`. Use the existing protected
+rehearsal directory and retained disposable Docker containers.
+
+1. Run `python tools/local_title_rehearsal/run.py recover forward` or
+   `python tools/local_title_rehearsal/run.py recover restore` for the specific
+   durable attempt. A live controller holds the local operation lock. If the
+   recorded app generation is still running, the command journals unresolved
+   state and exits unsuccessfully. Preserve the attempt and any result verbatim.
+2. Confirm the exact retained disposable app identity and let any in-flight CLI
+   writer finish. Stop and start only that app container to fence off the old
+   writer generation. Keep the disposable database running and the historical
+   baseline stopped. The guarded save rejects a delayed request from an old app
+   generation before WordPress boots. Recovery validates the same app and database
+   containers, isolation, mounts, mounted source and fixed page before accepting a
+   read. The journal digest binds each observation to the original attempt.
+3. Run the same recovery command from a fresh process. It appends a separate
+   observation for the original, proposed, different or unavailable raw value.
+   These values are relative to the attempt. For `restore`, the proposed value is
+   the historical original Title. Observations describe current state. Keep all
+   observations and inspect the named file if a record is incomplete or conflicts
+   with the destination. Older journals without writer provenance cannot be
+   upgraded by inference.
+4. If forward recovery observes the synthetic Title, `run.py restore` is the
+   separate guarded operation that can restore the exact original Title. An
+   intervening Title or a conflicting settled observation blocks the save. If
+   proposed-state capture was interrupted, restoration can capture it in a fresh
+   directory while the synthetic Title is still present. If forward recovery
+   observes the original Title, leave it in place and retain
+   the attempted journal. A different or unavailable Title requires evidence
+   review. Never retry by changing an attempt name or moving a journal.
+5. Use `run.py verify` after restoration, including when `recover restore` observes
+   the historical original Title. Verification captures fresh restored pages in a
+   separate directory, checks the retained proposed-state captures against the
+   declared forward and reverse changes, and checks the raw Title and original
+   volume manifests. Missing or failed rendered checks leave verification
+   incomplete. Partial capture files from an earlier process are preserved.
+
+## Interruption exercises on November 17, 2026
+
+The disposable WordPress save returned the synthetic Title before the first
+controller exited without a result record. Recovery on the original app generation
+recorded unresolved state. After restarting only the disposable app, fresh recovery
+observed the synthetic Title. A separate guarded restoration returned the original
+Title and passed the declared rendered checks.
+
+After verified restoration, a second fault controller exited after journaling its
+attempt and before dispatching the save. Two fresh recovery processes observed the
+original Title. Across both exercises, the private transport traces recorded zero
+recovery save dispatches. Final verification matched the original raw Title,
+both rendered page declarations and both sanitized baseline captures. The
+historical baseline and PR #28 evidence remained unchanged. Private recovery
+journals and transport traces are retained under the ignored rehearsal directory.
 
 ## Focused validation
 
 The tests cover exact raw-string restoration (including quotes/backslashes),
 intervening-title refusal, lost replies before/after a possible write, unreadable
 reconciliation, pending-attempt retry refusal, explicit API failure and invalid
-attempt names. Existing title-effect and publication-verification tests run with
-them. Their success validates the journal logic, not the unperformed WordPress save.
+attempt names. Synthetic interruption tests cover both interruption points,
+unchanged and changed values, unreadable state, repetition, malformed evidence and a destination mismatch.
+They assert that recovery makes zero save calls. Existing title-effect and
+publication verification retain their declared checks.
 Scope tests additionally confirm empty, missing, extra and reordered pages, empty
 effect lists, omitted or duplicate checks, changed selectors/values and unsupported
 rule types are rejected before any backend read or write.

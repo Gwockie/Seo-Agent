@@ -15,12 +15,13 @@ class LocalTitleScopeTests(unittest.TestCase):
         self.assertEqual([len(page['title_effects']) for page in scope['pages']], [7, 4])
         self.assertEqual([len(page['publication_effects']) for page in scope['pages']], [8, 7])
         backend = Mock()
-        backend.read.side_effect = [CURRENT, PROPOSED]
+        backend.destination.return_value = 'b' * 64
+        backend.read_state.side_effect = [(CURRENT, 'a' * 64), (PROPOSED, 'a' * 64)]
         backend.save.return_value = {'status': 'returned'}
         with tempfile.TemporaryDirectory() as directory:
             result = save_forward(backend, directory, scope, document_titles=self.titles)
         self.assertEqual(result['outcome'], 'applied')
-        backend.save.assert_called_once_with(expected=CURRENT, replacement=PROPOSED)
+        backend.save.assert_called_once_with(expected=CURRENT, replacement=PROPOSED, writer_epoch='a' * 64)
 
     def test_empty_missing_extra_and_reordered_pages_cannot_reach_backend(self):
         valid = expected_scope(self.titles)
@@ -40,7 +41,7 @@ class LocalTitleScopeTests(unittest.TestCase):
                 backend = Mock()
                 with self.assertRaises(ValueError):
                     save_forward(backend, directory, scope, document_titles=self.titles)
-                backend.read.assert_not_called()
+                backend.read_state.assert_not_called()
                 backend.save.assert_not_called()
 
     def test_changed_urls_locations_values_and_rule_coverage_are_rejected(self):
@@ -71,5 +72,5 @@ class LocalTitleScopeTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     save_forward(backend, directory, scope, document_titles=self.titles)
                 backend.assert_not_called()
-                backend.read.assert_not_called()
+                backend.read_state.assert_not_called()
                 backend.save.assert_not_called()
