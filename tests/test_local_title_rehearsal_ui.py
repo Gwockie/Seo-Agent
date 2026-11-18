@@ -45,17 +45,19 @@ class RehearsalUITests(unittest.TestCase):
         self.source = self.save_proposal()
         self.selection = (self.aid, self.source['action_id'], 1)
         self.capture('before', directory=self.root)
-        self.record(self.root/'clone.json', {'source_manifest': 'fixture'})
+        clone_record = self.root/run.CLONE_RECORD
+        clone_record.parent.mkdir(parents=True)
+        self.record(clone_record, {'source_manifest': 'fixture'})
         self.use(patch.dict('os.environ', {'SEO_DEMO': '1', 'SEO_WORKSPACE': str(self.workspace),
                                           'SEO_LOCAL_TITLE_REHEARSAL': '1'}))
         self.use(patch.multiple(run, RUNTIME_PRIVATE=self.root, PRIVATE=self.root,
-                                require_protected=lambda _: None, Backend=lambda: self.backend,
+                                Backend=lambda: self.backend,
                                 retained_baseline=lambda: {'title': CURRENT, 'baseline': 'fixture'},
                                 load_scope=lambda: self.scope, capture=self.capture,
                                 clone=lambda *_, **__: 'fixture', inspect_baseline=lambda: 'fixture',
                                 inspect_retained_runtime=lambda: self.runtime))
-        self.use(patch.multiple(control, require_protected=lambda _: None,
-                                _prior_rehearsals_settled=lambda *_: None, _probe=self.probe))
+        self.use(patch.multiple(control, require_protected=lambda _: None, require_registered=lambda _: None,
+                                load_registration=lambda _: {'replacement_runtime': self.runtime}, _probe=self.probe))
 
     def use(self, patcher):
         patcher.start()
@@ -358,11 +360,10 @@ class RehearsalUITests(unittest.TestCase):
         for document in ({}, [{'elements': [False]}],
                          [{'id': '022c973', 'settings': {'__dynamic__': []}}]):
             data = {'elementor_data': json.dumps(document)}
-            with patch.multiple(run, verify_historical_config=lambda: None, preflight_command=lambda: data):
+            with patch.object(run, 'preflight_command', return_value=data):
                 with self.assertRaisesRegex(ValueError, 'Invalid representative heading data'):
                     run.check_preflight()
-        with patch.multiple(run, verify_historical_config=lambda: None,
-                            preflight_command=lambda: {'elementor_data': '{}'}), patch.object(
+        with patch.object(run, 'preflight_command', return_value={'elementor_data': '{}'}), patch.object(
             control, '_probe', side_effect=lambda *_: run.check_preflight()
         ):
             app = self.open()

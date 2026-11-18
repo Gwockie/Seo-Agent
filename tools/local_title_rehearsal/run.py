@@ -1,36 +1,31 @@
 """Explicit stages for one title-only local rehearsal; retained evidence is exclusive."""
-import importlib.util
 import json
 import re
 import subprocess
 import sys
 from hashlib import sha256
-from pathlib import Path
+from types import ModuleType
 
-from tools.local_title_rehearsal.runtime import (
-    HERE, OLD, clone, docker, inspect_baseline,
-    inspect_runtime, need, verify_historical_config,
+from tools.local_title_rehearsal.locator import (
+    BASELINE_DIR, CLONE_RECORD, REVIEWED_TOOLS, STABLE_ROOT, file_digest, load_registration,
 )
-from seo_agent.coordination import BusyError, run_lock
+from tools.local_title_rehearsal.runtime import (
+    PROJECT, STABLE_PROJECT, clone, docker, inspect_baseline, inspect_docker,
+    inspect_runtime, local_docker, need, require_exclusive_volumes,
+)
 from seo_agent.local_title_rehearsal import DestinationMismatch, forward_binding, recover, require_observed_replacement, transition
 from seo_agent.post_title_effects import TitleEffect, verify_title_effects
 from seo_agent import publication_verification as pv
 from seo_agent.page_tracking import extract
 from seo_agent.storage import new_id, utc_now
-from seo_agent.protection import require_protected
 from bs4 import BeautifulSoup
 from tools.local_title_rehearsal.proposal_binding import digest, validate_binding
 from tools.local_title_rehearsal.scope import PATHS, CURRENT, PROPOSED, HOME, expected_scope, validate_scope, save_forward
-from tools.local_title_rehearsal.screening import SIGNING_OPTION, SIGNING_REJECTION, ScreeningRejected, screen_options
+from tools.local_title_rehearsal.screening import SIGNING_OPTION, screen_options
 
 
-# The existing containers bind files from this checkout. Keep their identity
-# and the shared operation lock fixed when the app runs from another checkout.
-RETAINED_CHECKOUT = Path.home()/'.codex/worktrees/e369/local-seo-agent'
-RUNTIME_PRIVATE = RETAINED_CHECKOUT/'.tmp/title-rehearsal-20261117'
-WRITER = RETAINED_CHECKOUT/'tools/local_title_rehearsal/save-title.php'
-PRIVATE = RUNTIME_PRIVATE / 'credential-screening-resume'
-JOURNAL = RUNTIME_PRIVATE / 'interruption-recovery'
+RUNTIME_PRIVATE = STABLE_ROOT
+PRIVATE = RUNTIME_PRIVATE / BASELINE_DIR
 
 
 def record(name, data, *, directory=PRIVATE):
@@ -39,23 +34,33 @@ def record(name, data, *, directory=PRIVATE):
 
 
 def inspect_retained_runtime():
-    runtime = inspect_runtime(private=RUNTIME_PRIVATE, writer=WRITER)
-    retained = json.loads((RUNTIME_PRIVATE/'running-isolation.json').read_text())
-    if runtime != retained:
-        raise DestinationMismatch('Disposable runtime identity differs from the retained rehearsal')
+    registration = load_registration(RUNTIME_PRIVATE)
+    return inspect_replacement(registration['replacement_runtime'], registration['retired_runtime'])
+
+
+def inspect_replacement(expected, retired, *, require_running=True):
+    runtime = inspect_runtime(private=RUNTIME_PRIVATE, writer=RUNTIME_PRIVATE/'save-title.php',
+                              secrets=RUNTIME_PRIVATE/'secrets', project=STABLE_PROJECT,
+                              require_running=require_running)
+    if runtime != expected:
+        raise DestinationMismatch('Disposable runtime identity differs from the registered replacement')
+    for role in ('app', 'db'):
+        old = inspect_docker('container', 'inspect', PROJECT+'-'+role)
+        need(old['Id'] == retired[role]['id'] and old['State']['Status'] == 'exited',
+             'Retired rehearsal container identity differs or it is running')
+    require_exclusive_volumes(*(item['id'] for item in runtime.values()))
     return runtime
 
 
-def preflight_command(*, sanitize=False):
-    runtime = inspect_retained_runtime()
-    env = ['-e', 'LSEO_TITLE_SANITIZE=1' if sanitize else 'LSEO_TITLE_SANITIZE=0']
+def preflight_command(runtime=None):
+    runtime = inspect_retained_runtime() if runtime is None else runtime
     # Keep raw option input in process memory. The usual Docker failure logger
     # would retain partial stdout on error, so this command has a fixed error.
     try:
-        process = subprocess.run(
-            ['docker', 'exec', '-i', *env, runtime['app']['id'], 'php',
-             '-d', 'display_errors=0', '-d', 'log_errors=0'],
-            input=(HERE/'preflight.php').read_bytes(), capture_output=True, timeout=90,
+        process = local_docker(
+            'exec', '-i', '-e', 'LSEO_TITLE_SANITIZE=0', runtime['app']['id'], 'php',
+            '-d', 'display_errors=0', '-d', 'log_errors=0',
+            input=(RUNTIME_PRIVATE/'preflight.php').read_bytes(), capture_output=True, timeout=90,
         )
         process.check_returncode()
         return json.loads(process.stdout)
@@ -63,16 +68,26 @@ def preflight_command(*, sanitize=False):
         raise ValueError('Local service preflight command failed without a usable response') from None
 
 
-def check_preflight():
-    verify_historical_config()
-    data = preflight_command()
+def _reviewed_module(name):
+    path = RUNTIME_PRIVATE / REVIEWED_TOOLS / (name + '.py')
+    module = ModuleType(name)
+    exec(compile(path.read_bytes(), str(path), 'exec'), vars(module))
+    return module
+
+
+def check_preflight(runtime=None):
+    data = preflight_command(runtime)
     check_heading_binding(data.pop('elementor_data', None))
-    sys.path.insert(0, str(OLD))
+    inert = _reviewed_module('inert_serialized')
+    previous = sys.modules.get('inert_serialized')
+    sys.modules['inert_serialized'] = inert
     try:
-        from screen import inspect as historical_inspect, loads
-        from inert_serialized import parse
+        screen = _reviewed_module('screen')
     finally:
-        sys.path.remove(str(OLD))
+        if previous is None:
+            del sys.modules['inert_serialized']
+        else:
+            sys.modules['inert_serialized'] = previous
     # Validate the same two core formats/routes separately from the historical parser.
     options = {row['option_name']: row['option_value'] for row in data.pop('options')}
     need(options.pop('time_format', None) in ('H:i', 'g:i a'), 'Unexpected time format')
@@ -81,7 +96,7 @@ def check_preflight():
         isinstance(key, str) and len(key) < 1000 and isinstance(value, str) and
         re.fullmatch(r'index\.php\?[A-Za-z0-9_=&$\[\]/.%-]+', value)
         for key, value in routes.items()), 'Unexpected rewrite rule destination')
-    screened = screen_options(options, historical_inspect, parse, loads)
+    screened = screen_options(options, screen.inspect, inert.parse, screen.loads)
     need(options.get(SIGNING_OPTION) == '', 'Expected an existing empty signing option')
     return {**data, 'options_screening': screened, 'signing_option_empty': True,
             'post_title_binding_verified': True, 'observed_utc': utc_now()}
@@ -115,40 +130,11 @@ def check_heading_binding(raw):
          'Heading does not use expected Post Title binding')
 
 
-def preflight():
-    try:
-        data = check_preflight()
-    except ScreeningRejected as exc:
-        suffix = '-after-sanitize' if (PRIVATE/'sanitization-attempt.json').exists() else ''
-        record('screening-rejection'+suffix, {'observed_utc': utc_now(), **exc.diagnostic})
-        print(json.dumps(exc.diagnostic))
-        raise SystemExit('Historical options screen rejected the input') from None
-    record('preflight', data)
-
-
-def sanitize():
-    verify_historical_config()
-    rejection = json.loads((PRIVATE/'screening-rejection.json').read_text())
-    need(all(rejection.get(key) == value for key, value in SIGNING_REJECTION.items()),
-         'This operation requires the exact observed signing-option rejection')
-    need(not any((PRIVATE/name).exists() for name in
-                 ('preflight.json', 'baseline-title.json', 'forward-attempt.json', 'restore-attempt.json')),
-         'Sanitization must precede the passing preflight, baseline and title attempts')
-    baseline = inspect_baseline()
-    clone_record = json.loads((RUNTIME_PRIVATE/'clone.json').read_text())
-    need(baseline == clone_record['baseline'] and clone('manifest') == clone_record['source_manifest'],
-         'Preserved baseline differs from the retained clone record')
-    operation = {'location': ['options', SIGNING_OPTION], 'operation': 'clear_existing_scalar_with_update_option'}
-    record('sanitization-attempt', {**operation, 'observed_utc': utc_now()})
-    outcome = preflight_command(sanitize=True)
-    need(outcome == {'signing_option_cleared': True}, 'Sanitization was not confirmed; reconcile before proceeding')
-    record('sanitization-result', {**operation, **outcome, 'observed_utc': utc_now()})
-
-
-def baseline_document_titles():
+def baseline_document_titles(directory=None):
+    directory = PRIVATE if directory is None else directory
     titles = []
     for index in range(len(PATHS)):
-        soup = BeautifulSoup((PRIVATE/f'before-{index}-raw.html').read_bytes().decode('utf-8'), 'html.parser')
+        soup = BeautifulSoup((directory/f'before-{index}-raw.html').read_bytes().decode('utf-8'), 'html.parser')
         nodes = soup.select('head > title')
         need(len(nodes) == 1, 'Exactly one baseline document title required')
         titles.append(nodes[0].get_text())
@@ -194,23 +180,16 @@ class Backend:
         self.bound_destination = None
 
     def runtime_context(self):
-        paths = ('/opt/lseo/save-title.php', '/var/www/html/wp-config.php',
-                 '/var/www/html/wp-content/mu-plugins/000-local-isolation.php')
         try:
             runtime = inspect_retained_runtime()
-            app = runtime['app']['id']
-            checksums = docker('exec', app, 'sha256sum', *paths, diagnostic_dir=None).decode()
+            hashes = verify_runtime_mounts(runtime, RUNTIME_PRIVATE, RUNTIME_PRIVATE/'save-title.php',
+                                           RUNTIME_PRIVATE/'secrets')
         except subprocess.SubprocessError:
             raise RuntimeError('Docker returned no usable runtime evidence') from None
-        local = (WRITER, RUNTIME_PRIVATE/'wp-config.php', RUNTIME_PRIVATE/'isolation.php')
-        hashes = [sha256(path.read_bytes()).hexdigest() for path in local]
-        if checksums.splitlines() != [f'{digest}  {path}' for digest, path in zip(hashes, paths)]:
-            raise DestinationMismatch('Mounted source differs from the local rehearsal files')
-        context = {'runtime': runtime, 'mount_sha256': hashes, 'page': HOME+PATHS[0], 'post_id': 716}
-        identity = sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
+        identity = destination_digest(runtime, hashes)
         if self.bound_destination is not None and self.bound_destination != identity:
             raise DestinationMismatch('Runtime destination changed during the command')
-        return app, identity
+        return runtime['app']['id'], identity
 
     def destination(self):
         _, self.bound_destination = self.runtime_context()
@@ -218,20 +197,7 @@ class Backend:
 
     def call(self, payload):
         app, _ = self.runtime_context()
-        try:
-            process = subprocess.run(
-                ['docker', 'exec', '-i', app, 'php', '-d', 'display_errors=0', '-d', 'log_errors=0',
-                 '/opt/lseo/save-title.php'],
-                input=json.dumps(payload).encode(), capture_output=True, timeout=90, check=True,
-            )
-            response = json.loads(process.stdout)
-        except (OSError, subprocess.SubprocessError, ValueError):
-            raise RuntimeError('Local WordPress title command returned no usable response') from None
-        need(isinstance(response, dict) and response.get('post_id') == 716 and
-             response.get('operation') == payload['operation'] and isinstance(response.get('title'), str) and
-             isinstance(response.get('epoch'), str) and re.fullmatch(r'[0-9a-f]{64}', response['epoch']),
-             'Invalid raw WordPress title response')
-        return response
+        return title_command(app, payload)
 
     def read_state(self):
         response = self.call({'operation': 'read'})
@@ -249,11 +215,54 @@ class Backend:
         return response
 
 
-def capture(label, *, directory=PRIVATE):
-    runtime = inspect_retained_runtime()
-    spec = importlib.util.spec_from_file_location('reviewed_preview', OLD/'preview_proxy.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def destination_digest(runtime, hashes):
+    context = {'runtime': runtime, 'mount_sha256': hashes, 'page': HOME+PATHS[0], 'post_id': 716}
+    return sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
+
+
+def verify_runtime_mounts(runtime, private, writer, secrets, *, historical=False):
+    app_files = {
+        '/opt/lseo/save-title.php': writer,
+        '/var/www/html/wp-config.php': private/'wp-config.php',
+        '/var/www/html/wp-content/mu-plugins/000-local-isolation.php': private/'isolation.php',
+    }
+    db_files = {}
+    if not historical:
+        app_files.update({'/run/secrets/db-user': secrets/'db-user', '/run/secrets/wp-salts': secrets/'wp-salts'})
+        db_files.update({'/run/secrets/db-root': secrets/'db-root', '/run/secrets/db-user': secrets/'db-user'})
+    hashes = []
+    for role, files in (('app', app_files), ('db', db_files)):
+        if not files:
+            continue
+        expected = [file_digest(path) for path in files.values()]
+        checksums = docker('exec', runtime[role]['id'], 'sha256sum', *files, diagnostic_dir=None).decode()
+        if checksums.splitlines() != [f'{value}  {path}' for path, value in zip(files, expected)]:
+            raise DestinationMismatch('Mounted source differs from the local rehearsal files')
+        hashes.extend(expected)
+    return hashes
+
+
+def title_command(app, payload):
+    try:
+        process = local_docker(
+            'exec', '-i', app, 'php', '-d', 'display_errors=0', '-d', 'log_errors=0',
+            '/opt/lseo/save-title.php', input=json.dumps(payload).encode(), capture_output=True, timeout=90, check=True,
+        )
+        response = json.loads(process.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        raise RuntimeError('Local WordPress title command returned no usable response') from None
+    need(isinstance(response, dict) and response.get('post_id') == 716 and
+         response.get('operation') == payload['operation'] and isinstance(response.get('title'), str) and
+         isinstance(response.get('epoch'), str) and re.fullmatch(r'[0-9a-f]{64}', response['epoch']),
+         'Invalid raw WordPress title response')
+    return response
+
+
+def capture(label, *, directory=PRIVATE, runtime=None):
+    if runtime is None:
+        runtime = inspect_retained_runtime()
+        verify_runtime_mounts(runtime, RUNTIME_PRIVATE, RUNTIME_PRIVATE/'save-title.php', RUNTIME_PRIVATE/'secrets')
+    module = _reviewed_module('preview_proxy')
     records = []
     for index, path in enumerate(PATHS):
         script = '''import http.client,socket,json,base64
@@ -363,7 +372,7 @@ def retained_baseline():
     baseline = json.loads((PRIVATE/'baseline-title.json').read_text())
     preflight = json.loads((PRIVATE/'preflight.json').read_text())
     need(baseline['title'] == CURRENT and baseline['proposed'] == PROPOSED and
-         baseline['runtime'] == json.loads((RUNTIME_PRIVATE/'running-isolation.json').read_text()),
+         baseline['runtime'] == load_registration(RUNTIME_PRIVATE)['replacement_runtime'],
          'Retained baseline differs from the fixed title or runtime')
     need(all(preflight.get(key) is True for key in ('http_intercepted', 'mail_intercepted', 'jobs_intercepted',
                                                    'signing_option_empty', 'post_title_binding_verified')) and
@@ -384,8 +393,8 @@ def verify_restoration(backend, journal, baseline, *, binding=None):
         before = (PRIVATE/f'before-{index}-sanitized.html').read_bytes()
         restored = (journal/f'restored-{index}-sanitized.html').read_bytes()
         exact.append({'path': path, 'exact_restoration': before == restored})
-    sources = clone('manifest', diagnostic_dir=journal)
-    source_unchanged = sources == json.loads((RUNTIME_PRIVATE/'clone.json').read_text())['source_manifest']
+    sources = clone('manifest', diagnostic_dir=journal, tool=RUNTIME_PRIVATE/'clone-volumes.py')
+    source_unchanged = sources == json.loads((RUNTIME_PRIVATE/CLONE_RECORD).read_text())['source_manifest']
     baseline_unchanged = inspect_baseline() == baseline['baseline']
     record('restoration-verified', {'raw_title_exact': raw_title_exact, 'pages': exact,
                                     'baseline_volume_manifests_unchanged': source_unchanged,
@@ -420,16 +429,7 @@ def run_phase(args, backend, journal, *, binding=None):
     if binding is not None:
         validate_binding(binding)
     replacement = binding['replacement'] if binding is not None else PROPOSED
-    if phase == 'preflight':
-        preflight()
-    elif phase == 'sanitize':
-        sanitize()
-    elif phase == 'baseline':
-        need((PRIVATE/'preflight.json').exists(), 'Passing preflight required before baseline capture')
-        record('baseline-title', {'title': backend.read(), 'proposed': PROPOSED,
-                                 'runtime': inspect_retained_runtime(), 'baseline': inspect_baseline()})
-        capture('before')
-    elif phase == 'recover':
+    if phase == 'recover':
         name = args[1]
         expected, target = (CURRENT, replacement) if name == 'forward' else (replacement, CURRENT)
         result = recover(backend, journal, name, expected=expected, replacement=target)
@@ -471,24 +471,5 @@ def run_phase(args, backend, journal, *, binding=None):
     print(json.dumps({'phase': phase, 'status': 'completed'}))
 
 
-def main(args, *, backend=None, journal=JOURNAL):
-    need((len(args) == 1 and args[0] in {'preflight', 'sanitize', 'baseline', 'forward', 'restore', 'verify'}) or
-         (len(args) == 2 and args[0] == 'recover' and args[1] in {'forward', 'restore'}),
-         'Choose a rehearsal phase or recover forward / recover restore')
-    require_protected(RUNTIME_PRIVATE)
-    try:
-        with run_lock(RUNTIME_PRIVATE/'.title-operation.lock'):
-            if args[0] == 'forward':
-                journal.mkdir(exist_ok=True)
-            if args[0] in {'forward', 'restore', 'verify', 'recover'}:
-                require_protected(journal)
-            run_phase(args, backend if backend is not None else Backend(), journal)
-    except BusyError:
-        raise ValueError('Another local title controller is active; leave its journal intact') from None
-
-
 if __name__ == '__main__':
-    try:
-        main(sys.argv[1:])
-    except (ValueError, OSError, RuntimeError) as exc:
-        sys.exit(str(exc))
+    sys.exit('Use the explicitly enabled demo app for saved-proposal rehearsal and recovery.')

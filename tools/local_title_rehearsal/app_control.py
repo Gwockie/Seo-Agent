@@ -10,6 +10,7 @@ from seo_agent.coordination import BusyError, run_lock
 from seo_agent.local_title_rehearsal import forward_binding, inspect_attempt, require_observed_replacement
 from seo_agent.protection import ProtectionError, require_protected
 from . import proposal_binding as proposals, run
+from .locator import OPERATION_LOCK, RuntimeRegistrationError, load_registration, require_registered
 from .runtime import need
 from .scope import CURRENT, HOME, PATHS, PROPOSED
 
@@ -63,15 +64,18 @@ def _restored(directory, runtime, binding=None):
         return False
 
 
-def _prior_rehearsals_settled(backend, runtime):
+def _prior_rehearsals_settled(backend, runtime, history):
     # PR #28's completed rehearsal, PR #29's restored interruption, and its
     # fenced interruption before dispatch all share this exact destination.
     # The first completed run predates writer provenance, so it contributes
     # its final baseline verification, never authority to recover or restore.
-    require_observed_replacement(backend, run.JOURNAL, 'restore', expected=PROPOSED, replacement=CURRENT)
-    need(all(_restored(directory, runtime) for directory in (run.PRIVATE, run.JOURNAL)),
+    interrupted = history/'interruption-recovery'
+    completed = history/'credential-screening-resume'
+    require_observed_replacement(backend, interrupted, 'forward', expected=CURRENT, replacement=PROPOSED)
+    require_observed_replacement(backend, interrupted, 'restore', expected=PROPOSED, replacement=CURRENT)
+    need(all(_restored(directory, runtime) for directory in (completed, interrupted)),
          'Earlier restoration evidence is incomplete')
-    before_save = run.RUNTIME_PRIVATE/'interruption-evidence'/'before-save-journal'
+    before_save = history/'interruption-evidence'/'before-save-journal'
     pending = _attempt(before_save, 'forward')
     observations = {obs['observation'] for obs in pending['observations'] if obs['actual'] is not None}
     need(pending['outcome'] == 'interrupted' and observations == {'original_value_observed'} and
@@ -149,12 +153,6 @@ def _journal_status(directory, runtime, status):
 def _probe(backend, status):
     # Bind and verify the mounted app before booting WordPress for probes.
     backend.destination()
-    run.verify_historical_config()
-    for filename in ('wp-config.php', 'isolation.php'):
-        expected = (run.OLD/filename).read_text().replace('18717', '18718').replace(
-            'meadow-representative-20261021-d0f5a2ec', 'title-rehearsal-20261117')
-        need((run.RUNTIME_PRIVATE/filename).read_text() == expected, 'Local isolation source differs from the reviewed copy')
-    need(run.WRITER.read_text() == (run.HERE/'save-title.php').read_text(), 'Mounted title writer differs from this app revision')
     status.isolation = True
     run.retained_baseline()
     run.load_scope()
@@ -215,7 +213,7 @@ def _selected_proposal(status, store, sid, selection):
 
 
 def _inspect(status, backend, *, sid, selection):
-    runtime = _read(run.RUNTIME_PRIVATE/'running-isolation.json')
+    runtime = load_registration(run.RUNTIME_PRIVATE)['replacement_runtime']
     status.containers = {role: runtime[role]['id'] for role in ('app', 'db')}
     journals = _journals(_root())
     latest = Status()
@@ -234,7 +232,6 @@ def _inspect(status, backend, *, sid, selection):
     if selection is not None and status.proposal is None and not shown:
         return None
     epoch = _probe(backend, status)
-    _prior_rehearsals_settled(backend, runtime)
     # Reuse the same destination and historical observation guard that gates
     # verification before enabling a subsequent run.
     if latest.verified:
@@ -276,12 +273,12 @@ def inspect(*, store, sid, selection=None):
     try:
         need(proposals.mapped_site(store, sid), 'This site has no validated local Title mapping.')
         _selected_proposal(status, store, sid, selection)
-        require_protected(run.RUNTIME_PRIVATE)
-        with run_lock(run.RUNTIME_PRIVATE/'.title-operation.lock', create=False):
+        require_registered(run.RUNTIME_PRIVATE)
+        with run_lock(run.RUNTIME_PRIVATE/OPERATION_LOCK, create=False):
             _inspect(status, run.Backend(), sid=sid, selection=selection)
     except BusyError:
         status.blocker = 'Another local title controller is active.'
-    except ProtectionError as exc:
+    except (ProtectionError, RuntimeRegistrationError) as exc:
         status.blocker = str(exc)
     except (ValueError, RuntimeError) as exc:
         # ValueError may carry raw JSON/Pydantic data. Only known operator
@@ -300,6 +297,8 @@ def _safe_blocker(exc):
             r'^(Docker inspection unavailable|Disposable Docker service (app|db) |'
             r'Another local title controller|Wrong image or runtime user$|Network exposure$|'
             r'Unsafe capabilities$|Host namespace$|Unexpected mounts$|Shared or wrong volume$|Unexpected bind$|'
+            r'Unexpected runtime restart policy|Retired rehearsal container identity differs|'
+            r'Another Docker container is using the rehearsal volumes|'
             r'Disposable runtime identity differs|Mounted (source differs|title writer differs)|'
             r'Current runtime differs|Local isolation source differs|Historical reviewed configuration drift|'
             r'Local service preflight command failed|Historical options screen rejected|'
@@ -322,8 +321,8 @@ def execute(action, revision, *, store, sid, selection=None):
     """Recalculate the action under the shared lock before calling the CLI phase."""
     try:
         need(proposals.mapped_site(store, sid), 'This site has no validated local Title mapping.')
-        require_protected(run.RUNTIME_PRIVATE)
-        with run_lock(run.RUNTIME_PRIVATE/'.title-operation.lock', create=False):
+        require_registered(run.RUNTIME_PRIVATE)
+        with run_lock(run.RUNTIME_PRIVATE/OPERATION_LOCK, create=False):
             status = Status()
             backend = run.Backend()
             _selected_proposal(status, store, sid, selection)
@@ -346,7 +345,7 @@ def execute(action, revision, *, store, sid, selection=None):
                 run.run_phase(action, backend, journal)
     except BusyError:
         raise ValueError('Another local title controller is active.') from None
-    except ProtectionError:
+    except (ProtectionError, RuntimeRegistrationError):
         raise
     except OperationalError:
         raise ValueError('The proposal workspace is busy or unavailable. Review the current rehearsal state.') from None
