@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
-from seo_agent import tracking
+from seo_agent import page_tracking, tracking
 from seo_agent.coordination import run_lock
 from seo_agent.demo import seed_demo
 from seo_agent.local_title_rehearsal import DestinationMismatch
@@ -38,6 +38,8 @@ class RehearsalUITests(unittest.TestCase):
         self.store = Store(self.workspace)
         seed_demo(self.store)
         self.ids = {site['name']: site['id'] for site in self.store.sites()}
+        for sid in self.ids.values():
+            page_tracking.save_settings(self.store, sid, {'enabled': False})
         self.sid = self.ids['Demo psychology A']
         self.aid = self.store.create_audit(self.sid)
         self.source = self.save_proposal()
@@ -293,6 +295,10 @@ class RehearsalUITests(unittest.TestCase):
         for changes, reason in (
             ({'manual_post_title': None}, 'explicit Post Title mapping'),
             ({'proposed': 'Testing & Assessment'}, 'Unsupported local Title text'),
+            ({'proposed': 'Synthetic Assessment - Paoli'}, 'Unsupported local Title text'),
+            ({'proposed': 'Synthetic Review -'}, 'Unsupported local Title text'),
+            ({'proposed': 'Synthetic ``Review'}, 'Unsupported local Title text'),
+            ({'proposed': 'Synthetic Wordpress Review'}, 'Unsupported local Title text'),
             ({'proposed': 'Contact Us'}, 'retained literal verification'),
             ({'current': 'Unrelated baseline'}, 'saved proposal baseline differs'),
         ):
@@ -319,6 +325,7 @@ class RehearsalUITests(unittest.TestCase):
         original = self.store.site(self.sid)
         duplicate = original.model_copy(update={'name': 'Duplicate', 'gsc_property': 'sc-domain:psychology-a.example'})
         self.ids['Duplicate'] = self.store.save_site(duplicate)
+        page_tracking.save_settings(self.store, self.ids['Duplicate'], {'enabled': False})
         app = self.open('Duplicate', 'Hosting & CMS')
         self.assertFalse(any('Restore original Title' == button.label for button in app.button))
         self.assertFalse(any('run-000001' in row.value for row in app.text))
@@ -330,7 +337,7 @@ class RehearsalUITests(unittest.TestCase):
         self.execute(self.status())
         journal = control._root()/'run-000001'
         forward_report = journal/'before-to-after-verification.json'
-        forward_report.write_text('{"pages": [', encoding='utf-8')
+        forward_report.write_text('null', encoding='utf-8')
         app = self.open()
         self.assertFalse(self.button(app, 'restore').disabled)
         self.assertTrue(any('Incomplete rendered evidence' in line.value for line in app.caption))
@@ -343,7 +350,7 @@ class RehearsalUITests(unittest.TestCase):
         self.assertFalse(self.button(app, 'verify').disabled)
         self.button(app, 'verify').click().run()
         self.assertTrue(app.success)
-        self.assertEqual(forward_report.read_text(encoding='utf-8'), '{"pages": [')
+        self.assertEqual(forward_report.read_text(encoding='utf-8'), 'null')
         self.assertTrue(partial.exists())
         self.assertEqual(self.backend.saves, 2)
 
@@ -363,3 +370,16 @@ class RehearsalUITests(unittest.TestCase):
             self.assertTrue(self.button(app, 'forward').disabled)
             self.assertFalse(app.exception)
         self.assertEqual(self.backend.saves, 0)
+
+    def test_local_mapping_requires_the_exact_dynamic_heading(self):
+        title_tag = '[elementor-tag id="abc1234" name="post-title" settings="%7B%7D"]'
+        widget = {'id': '022c973', 'elType': 'widget', 'widgetType': 'heading',
+                  'settings': {'header_size': 'h1', '__dynamic__': {'title': title_tag}}}
+        run.check_heading_binding(json.dumps([widget]))
+        for altered in (
+            {**widget, 'widgetType': 'text-editor'},
+            {**widget, 'settings': {**widget['settings'], 'header_size': 'h2'}},
+            {**widget, 'settings': {**widget['settings'], '__dynamic__': {'title': 'prefix ' + title_tag}}},
+        ):
+            with self.assertRaisesRegex(ValueError, 'does not use expected Post Title binding'):
+                run.check_heading_binding(json.dumps([altered]))

@@ -104,11 +104,14 @@ def check_heading_binding(raw):
             if 'elements' in node:
                 groups.append(node['elements'])
     need(len(selected) == 1, 'Ambiguous representative heading source')
-    settings = selected[0].get('settings')
+    heading = selected[0]
+    settings = heading.get('settings')
     dynamic = settings.get('__dynamic__', {}) if isinstance(settings, dict) else None
     need(isinstance(dynamic, dict), 'Invalid representative heading data')
     binding = dynamic.get('title')
-    need(isinstance(binding, str) and 'name="post-title"' in binding and 'settings="%7B%7D"' in binding,
+    need(heading.get('elType') == 'widget' and heading.get('widgetType') == 'heading' and
+         settings.get('header_size') == 'h1' and isinstance(binding, str) and re.fullmatch(
+             r'\[elementor-tag id="[a-f0-9]{7}" name="post-title" settings="%7[Bb]%7[Dd]"\]', binding),
          'Heading does not use expected Post Title binding')
 
 

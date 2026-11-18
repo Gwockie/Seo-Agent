@@ -29,7 +29,8 @@ def validate_replacement(value):
     # Exclude text that WordPress typography filters can rewrite on this route.
     if (not isinstance(value, str) or not value or value == CURRENT or text_value(value) != value or
             any(c in '<>&\'"' or ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in value) or
-            len(value.encode('utf-8')) > 500 or re.search(r'--|\.\.\.|\(tm\)|\d+x\d+', value, re.I)):
+            len(value.encode('utf-8')) > 500 or 'Wordpress' in value or
+            re.search(r'``|--|(?:^| )-(?: |$)|\.\.\.|\(tm\)|\d+x\d+', value, re.I)):
         raise ValueError('Unsupported local Title text. Use distinct literal text with single spaces and no markup or typography substitutions.')
     return value
 

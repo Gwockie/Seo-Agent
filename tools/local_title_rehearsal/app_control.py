@@ -96,7 +96,8 @@ def _rendered(path, binding=None):
     try:
         result = []
         value = _read(path)
-        need(value.get('proposal_binding_sha256') == run.binding_reference(binding).get('proposal_binding_sha256'),
+        need(isinstance(value, dict) and
+             value.get('proposal_binding_sha256') == run.binding_reference(binding).get('proposal_binding_sha256'),
              'Rendered report differs from the saved proposal binding')
         for index, page in enumerate(value['pages']):
             checks = page['publication_effects']
