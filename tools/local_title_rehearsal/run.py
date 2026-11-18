@@ -6,17 +6,20 @@ import subprocess
 import sys
 from hashlib import sha256
 
-from runtime import HERE, OLD, PRIVATE as RUNTIME_PRIVATE, PROJECT, docker, inspect_baseline, inspect_runtime, need, clone, verify_historical_config
+from tools.local_title_rehearsal.runtime import (
+    HERE, OLD, PRIVATE as RUNTIME_PRIVATE, PROJECT, clone, docker, inspect_baseline,
+    inspect_runtime, need, verify_historical_config,
+)
 from seo_agent.coordination import BusyError, run_lock
-from seo_agent.local_title_rehearsal import DestinationMismatch, recover, require_forward_for_restore, transition
+from seo_agent.local_title_rehearsal import DestinationMismatch, recover, require_observed_replacement, transition
 from seo_agent.post_title_effects import TitleEffect, verify_title_effects
 from seo_agent import publication_verification as pv
 from seo_agent.page_tracking import extract
-from seo_agent.storage import utc_now
+from seo_agent.storage import new_id, utc_now
 from seo_agent.protection import require_protected
 from bs4 import BeautifulSoup
-from scope import PATHS, CURRENT, PROPOSED, HOME, validate_scope, save_forward
-from screening import SIGNING_OPTION, SIGNING_REJECTION, ScreeningRejected, screen_options
+from tools.local_title_rehearsal.scope import PATHS, CURRENT, PROPOSED, HOME, validate_scope, save_forward
+from tools.local_title_rehearsal.screening import SIGNING_OPTION, SIGNING_REJECTION, ScreeningRejected, screen_options
 
 
 PRIVATE = RUNTIME_PRIVATE / 'credential-screening-resume'
@@ -134,13 +137,17 @@ class Backend:
         self.bound_destination = None
 
     def runtime_context(self):
-        runtime = inspect_retained_runtime()
-        app = runtime['app']['id']
         paths = ('/opt/lseo/save-title.php', '/var/www/html/wp-config.php',
                  '/var/www/html/wp-content/mu-plugins/000-local-isolation.php')
-        hashes = [line.split()[0] for line in docker('exec', app, 'sha256sum', *paths).decode().splitlines()]
+        try:
+            runtime = inspect_retained_runtime()
+            app = runtime['app']['id']
+            checksums = docker('exec', app, 'sha256sum', *paths).decode()
+        except subprocess.SubprocessError:
+            raise RuntimeError('Docker returned no usable runtime evidence') from None
         local = (HERE/'save-title.php', RUNTIME_PRIVATE/'wp-config.php', RUNTIME_PRIVATE/'isolation.php')
-        if hashes != [sha256(path.read_bytes()).hexdigest() for path in local]:
+        hashes = [sha256(path.read_bytes()).hexdigest() for path in local]
+        if checksums.splitlines() != [f'{digest}  {path}' for digest, path in zip(hashes, paths)]:
             raise DestinationMismatch('Mounted source differs from the local rehearsal files')
         context = {'runtime': runtime, 'mount_sha256': hashes, 'page': HOME+PATHS[0], 'post_id': 716}
         identity = sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
@@ -220,10 +227,15 @@ print(json.dumps({'http_status':r.status,'headers':dict(r.getheaders()),'body':b
     record(label+'-captures', {'pages': records}, directory=directory)
 
 
-def compare(before_label, after_label, *, current, proposed, journal, reverse=False):
+def compare(before_label, after_label, *, current, proposed, journal, reverse=False, verification=None):
     declaration = load_scope()
+
     def capture_dir(label):
-        return PRIVATE if label == 'before' else journal
+        if label == 'before':
+            return PRIVATE
+        if label == 'restored' and verification is not None:
+            return verification
+        return journal
 
     left = json.loads((capture_dir(before_label)/(before_label+'-captures.json')).read_text())['pages']
     right = json.loads((capture_dir(after_label)/(after_label+'-captures.json')).read_text())['pages']
@@ -263,11 +275,10 @@ def compare(before_label, after_label, *, current, proposed, journal, reverse=Fa
             checked = pv._compare(effect, pv._observe(*sources[0], effect), pv._observe(*sources[1], effect), None)
             effects.append(checked)
         result.append({'url': page['url'], 'literal_title_effects': literal, 'publication_effects': effects})
-    record(before_label+'-to-'+after_label+'-verification', {'pages': result}, directory=journal)
+    record(before_label+'-to-'+after_label+'-verification', {'pages': result}, directory=verification or journal)
     need(all(page['literal_title_effects']['status'] == 'matches_expectation' and all(
         effect['status'] == 'matches_expectation' for effect in page['publication_effects']
     ) for page in result), 'Declared rendered effect failed; inspect retained verification')
-
 
 
 def retained_baseline():
@@ -302,6 +313,23 @@ def verify_restoration(backend, journal, baseline):
          all(page['exact_restoration'] for page in exact), 'Restoration verification failed; inspect retained evidence')
 
 
+def verify_rendered_restoration(backend, journal, baseline):
+    require_observed_replacement(backend, journal, 'restore', expected=PROPOSED, replacement=CURRENT)
+    need(backend.read() == CURRENT, 'An intervening Title prevents restoration verification')
+    need((journal/'after-captures.json').is_file(),
+         'Restoration verification incomplete; the proposed-state capture is unavailable')
+    # A controller can fail after a save or midway through capturing. Reobserve
+    # into a fresh directory and leave every earlier artifact in place.
+    verification = journal/f'verification-{new_id()}'
+    verification.mkdir()
+    capture('restored', directory=verification)
+    compare('before', 'after', current=CURRENT, proposed=PROPOSED, journal=journal, verification=verification)
+    compare('after', 'restored', current=PROPOSED, proposed=CURRENT, journal=journal,
+            reverse=True, verification=verification)
+    verify_restoration(backend, verification, baseline)
+    return verification.name
+
+
 def run_phase(args, backend, journal):
     phase = args[0]
     if phase == 'preflight':
@@ -328,7 +356,7 @@ def run_phase(args, backend, journal):
             capture('after', directory=journal)
             compare('before', 'after', current=CURRENT, proposed=PROPOSED, journal=journal)
         elif phase == 'restore':
-            require_forward_for_restore(backend, journal, expected=CURRENT, replacement=PROPOSED)
+            require_observed_replacement(backend, journal, 'forward', expected=CURRENT, replacement=PROPOSED)
             need(backend.read() == PROPOSED, 'An intervening Title prevents restoration')
             load_scope()
             forward_capture_error = None
@@ -342,12 +370,13 @@ def run_phase(args, backend, journal):
             capture('restored', directory=journal)
             if forward_capture_error:
                 record('after-capture-unavailable', {'error_type': forward_capture_error}, directory=journal)
-                raise ValueError('Raw Title restored and captured; proposed-state capture unavailable, run verify')
+                raise ValueError('Raw Title restored and captured; rendered verification incomplete because the proposed-state capture is unavailable')
             if not (journal/'before-to-after-verification.json').exists():
                 compare('before', 'after', current=CURRENT, proposed=PROPOSED, journal=journal)
             compare('after', 'restored', current=PROPOSED, proposed=CURRENT, reverse=True, journal=journal)
         elif phase == 'verify':
-            verify_restoration(backend, journal, baseline)
+            verification = verify_rendered_restoration(backend, journal, baseline)
+            print(json.dumps({'verification': verification}))
     print(json.dumps({'phase': phase, 'status': 'completed'}))
 
 

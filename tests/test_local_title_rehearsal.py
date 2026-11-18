@@ -1,9 +1,12 @@
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from seo_agent.local_title_rehearsal import recover, transition
+from tools.local_title_rehearsal import run
 
 
 class Backend:
@@ -22,6 +25,10 @@ class Backend:
         if self.mode == 'unreadable' and self.saves:
             raise TimeoutError('private diagnostic')
         return self.title, self.epoch
+
+    def read(self):
+        title, _ = self.read_state()
+        return title
 
     def save(self, *, expected, replacement, writer_epoch):
         if self.mode == 'crash-before':
@@ -163,6 +170,8 @@ class LocalTitleRehearsalTests(unittest.TestCase):
             backend.title = 'Intervening title'
             result = recover(backend, directory, 'forward', **titles)
             self.assertEqual(result['observation'], 'different_value_observed')
+            backend.title = 'Test'
+            recover(backend, directory, 'forward', **titles)
             with self.assertRaisesRegex(ValueError, 'proposed Title'):
                 transition(backend, directory, 'restore', expected='Test', replacement=titles['expected'])
             self.assertEqual(backend.saves, 1)
@@ -226,3 +235,56 @@ class LocalTitleRehearsalTests(unittest.TestCase):
                 recover(other, directory, 'forward', **titles)
             self.assertEqual(other.reads, 0)
             self.assertEqual(other.saves, 0)
+
+    def test_docker_inspection_or_source_probe_timeout_is_journaled(self):
+        for probe in ('inspect_retained_runtime', 'docker'):
+            with self.subTest(probe=probe), tempfile.TemporaryDirectory() as directory:
+                backend = Backend()
+                titles = self.interrupt(backend, directory, 'crash-before')
+                runtime = {'app': {'id': 'local-app'}}
+                with patch.object(run, 'inspect_retained_runtime', return_value=runtime), patch.object(
+                        run, probe, side_effect=subprocess.TimeoutExpired('docker', 90)):
+                    result = recover(run.Backend(), directory, 'forward', **titles)
+                self.assertEqual(result['reason'], 'destination_unavailable')
+                self.assertIsNone(result['actual'])
+                self.assertTrue((Path(directory) / result['record']).is_file())
+
+    def test_verify_recaptures_after_interrupted_restoration_without_saving(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = Path(directory)
+            backend = Backend()
+            backend.title = run.CURRENT
+            titles = {'expected': run.PROPOSED, 'replacement': run.CURRENT}
+            transition(backend, journal, 'forward', expected=run.CURRENT, replacement=run.PROPOSED)
+            backend.mode = 'crash-after'
+            with self.assertRaises(Interrupted):
+                transition(backend, journal, 'restore', **titles)
+            backend.epoch = 'c' * 64
+            self.assertEqual(recover(backend, journal, 'restore', **titles)['actual'], run.CURRENT)
+            partial = journal / 'restored-0-raw.html'
+            partial.write_bytes(b'partial original capture')
+            baseline = {'title': run.CURRENT}
+
+            with self.assertRaisesRegex(ValueError, 'proposed-state capture is unavailable'):
+                run.verify_rendered_restoration(backend, journal, baseline)
+            (journal / 'after-captures.json').touch()
+            capture, compare, verify = Mock(), Mock(), Mock()
+            with patch.multiple(run, capture=capture, compare=compare, verify_restoration=verify):
+                location = journal / run.verify_rendered_restoration(backend, journal, baseline)
+            self.assertTrue(location.is_dir())
+            capture.assert_called_once_with('restored', directory=location)
+            self.assertEqual([call.args for call in compare.call_args_list],
+                             [('before', 'after'), ('after', 'restored')])
+            self.assertTrue(compare.call_args.kwargs['reverse'])
+            verify.assert_called_once_with(backend, location, baseline)
+            self.assertEqual(partial.read_bytes(), b'partial original capture')
+            self.assertFalse((journal / 'restore-result.json').exists())
+            self.assertEqual(backend.saves, 2)
+
+            verify.reset_mock()
+            compare.side_effect = [None, ValueError('Reverse rendered mismatch')]
+            with patch.multiple(run, capture=capture, compare=compare, verify_restoration=verify):
+                with self.assertRaisesRegex(ValueError, 'Reverse rendered mismatch'):
+                    run.verify_rendered_restoration(backend, journal, baseline)
+            verify.assert_not_called()
+            self.assertEqual(backend.saves, 2)

@@ -151,11 +151,16 @@ rehearsal directory and retained disposable Docker containers.
    upgraded by inference.
 4. If forward recovery observes the synthetic Title, `run.py restore` is the
    separate guarded operation that can restore the exact original Title. An
-   intervening Title blocks the save. Use `run.py verify` to check raw restoration,
-   retained rendered captures and the original volume manifests. If recovery
-   observes the original Title, leave it in place and retain the attempted journal.
-   A different or unavailable Title requires evidence review. Never retry by
-   changing an attempt name or moving a journal.
+   intervening Title or a conflicting settled observation blocks the save. If
+   forward recovery observes the original Title, leave it in place and retain
+   the attempted journal. A different or unavailable Title requires evidence
+   review. Never retry by changing an attempt name or moving a journal.
+5. Use `run.py verify` after restoration, including when `recover restore` observes
+   the historical original Title. Verification captures fresh restored pages in a
+   separate directory, checks the retained proposed-state captures against the
+   declared forward and reverse changes, and checks the raw Title and original
+   volume manifests. Missing or failed rendered checks leave verification
+   incomplete. Partial capture files from an earlier process are preserved.
 
 ## Interruption exercises on November 17, 2026
 

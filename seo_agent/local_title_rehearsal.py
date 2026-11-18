@@ -71,7 +71,7 @@ def transition(backend, directory, name, *, expected, replacement):
     if attempt.exists() or result_path.exists() or any(attempt.parent.glob(f'{name}-recovery-*.json')):
         raise ValueError('Attempt already recorded; reconcile actual state without retrying')
     if name == 'restore':
-        require_forward_for_restore(backend, directory, expected=replacement, replacement=expected)
+        require_observed_replacement(backend, directory, 'forward', expected=replacement, replacement=expected)
     elif any(attempt.parent.glob('restore-*.json')):
         raise ValueError('Restoration history exists; inspect the local journal before any forward operation')
     destination = backend.destination()
@@ -183,6 +183,7 @@ def recover(backend, directory, name, *, expected, replacement):
         except (OSError, RuntimeError, ValueError):
             reason = 'read_unavailable'
         if epoch == attempt['writer_epoch']:
+            # A locked read can still precede a delayed writer in this generation.
             title = None
             reason = 'writer_generation_still_running'
     value = {'attempt_sha256': digest, 'destination': destination, 'app_epoch': epoch,
@@ -192,13 +193,13 @@ def recover(backend, directory, name, *, expected, replacement):
     return {**value, 'record': path.name}
 
 
-def require_forward_for_restore(backend, directory, *, expected, replacement):
-    """Require a known forward state before a separate guarded restoration."""
-    attempt, _, result, observations = _history(directory, 'forward', expected, replacement)
+def require_observed_replacement(backend, directory, name, *, expected, replacement):
+    """Require exact destination and a confirmed or recovered replacement value."""
+    attempt, _, result, observations = _history(directory, name, expected, replacement)
     if backend.destination() != attempt['destination']:
-        raise ValueError('Current runtime differs from the recorded forward destination')
-    latest = max(observations, key=lambda obs: datetime.fromisoformat(obs['observed_utc']), default=None)
-    eligible = (latest['observation'] == 'proposed_value_observed' if latest else
+        raise ValueError(f'Current runtime differs from the recorded {name} destination')
+    settled = {obs['observation'] for obs in observations if obs['actual'] is not None}
+    eligible = (settled == {'proposed_value_observed'} if observations else
                 result and result['outcome'] == 'applied')
     if not eligible:
-        raise ValueError('Restoration requires a confirmed or recovered proposed Title; inspect the forward journal')
+        raise ValueError(f'A confirmed or recovered proposed Title is required; inspect the {name} journal')
