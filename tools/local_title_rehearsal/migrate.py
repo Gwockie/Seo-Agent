@@ -14,7 +14,7 @@ from seo_agent.storage import private_location, utc_now
 
 from . import app_control, run, runtime
 from .locator import (
-    ACTIVE_FILES, OPERATION_LOCK, REGISTRATION, REVIEWED_FILES, REVIEWED_TOOLS, SECRETS, STABLE_ROOT,
+    ACTIVE_FILES, ACTIVE_JOURNALS, OPERATION_LOCK, REGISTRATION, REVIEWED_FILES, REVIEWED_TOOLS, SECRETS, STABLE_ROOT,
     SUPPORTED_SOURCE, RuntimeRegistrationError, checked_path, file_digest, validate_supported_source,
 )
 from .proposal_binding import digest, validate_binding
@@ -106,7 +106,7 @@ def reconcile_archives(old):
                      and (result['outcome'], result['actual'], result['write_attempted']) == ('applied', end, True),
                      'Legacy rehearsal title write is unsettled')
 
-    journals = app_control._journals(history/'app-rehearsals')
+    journals = app_control._journals(history/ACTIVE_JOURNALS)
     runtime.need([directory.name for directory in journals] == ['run-000001', 'run-000002'],
                  'Expected two retained app rehearsal journals')
     for directory in journals:
@@ -264,7 +264,7 @@ def migrate():
         require_protected(root)
         copy_verified(sources, root)
         run.PRIVATE.mkdir()
-        (root/'app-rehearsals').mkdir()
+        (root/ACTIVE_JOURNALS).mkdir()
         with (root/OPERATION_LOCK).open('xb') as lock:
             lock.write(b'0')
         require_protected(root)

@@ -12,6 +12,7 @@ from seo_agent.storage import private_location
 STABLE_ROOT = Path('C:/Personal Projects/seo-agent/local-seo-agent/workspace/private/local-staging/title-rehearsal')
 REGISTRATION = 'migration-manifest.json'
 OPERATION_LOCK = '.title-operation.lock'
+ACTIVE_JOURNALS = 'app-rehearsals'
 BASELINE_DIR = 'baseline'
 REVIEWED_TOOLS = 'reviewed-tools'
 SUPPORTED_SOURCE = {
@@ -81,6 +82,7 @@ def load_registration(root):
     if not path.exists():
         raise RuntimeRegistrationError('Local rehearsal runtime is unregistered or migration is incomplete.')
     checked_path(root / OPERATION_LOCK)
+    checked_path(root / ACTIVE_JOURNALS, directory=True)
     try:
         data = json.loads(checked_path(path).read_bytes(), object_pairs_hook=_record_fields)
         files = data['active_sha256']

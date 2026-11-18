@@ -89,7 +89,9 @@ def inspect_runtime(*, private=PRIVATE, writer=HERE/'save-title.php', secrets=SE
         if require_running:
             need(item['State']['Running'] and not item['State']['Paused'],
                  f'Disposable Docker service {role} is stopped or paused')
-        need(host['NetworkMode'] == 'none' and not host['PortBindings'] and not item['NetworkSettings']['Ports'], 'Network exposure')
+        network = item['NetworkSettings']
+        need(host['NetworkMode'] == 'none' and not host['PortBindings'] and not network['Ports'] and
+             set(network['Networks']) <= {'none'}, 'Network exposure')
         need(host['ReadonlyRootfs'] and host['CapDrop'] == ['ALL'] and not host.get('CapAdd') and
              not host['Privileged'] and 'no-new-privileges' in host['SecurityOpt'], 'Unsafe capabilities')
         need(host['PidMode'] != 'host' and host['IpcMode'] != 'host', 'Host namespace')

@@ -10,7 +10,7 @@ from tools.local_title_rehearsal.locator import (
     BASELINE_DIR, CLONE_RECORD, REVIEWED_TOOLS, STABLE_ROOT, file_digest, load_registration,
 )
 from tools.local_title_rehearsal.runtime import (
-    PROJECT, STABLE_PROJECT, clone, docker, inspect_baseline, inspect_docker,
+    HERE, PROJECT, STABLE_PROJECT, clone, docker, inspect_baseline, inspect_docker,
     inspect_runtime, local_docker, need, require_exclusive_volumes,
 )
 from seo_agent.local_title_rehearsal import DestinationMismatch, forward_binding, recover, require_observed_replacement, transition
@@ -195,14 +195,10 @@ class Backend:
         _, self.bound_destination = self.runtime_context()
         return self.bound_destination
 
-    def call(self, payload):
-        app, _ = self.runtime_context()
-        return title_command(app, payload)
-
     def read_state(self):
-        response = self.call({'operation': 'read'})
-        need(response.get('status') == 'read' and response.get('write_attempted') is False,
-             'Unexpected WordPress read response')
+        app, _ = self.runtime_context()
+        response = read_only_state(app)
+        check_heading_binding(response['elementor_data'])
         return response['title'], response['epoch']
 
     def read(self):
@@ -210,7 +206,8 @@ class Backend:
         return title
 
     def save(self, **values):
-        response = self.call({'operation': 'save', **values})
+        app, _ = self.runtime_context()
+        response = title_command(app, {'operation': 'save', **values})
         need(response['epoch'] == values['writer_epoch'], 'Save response has the wrong app generation')
         return response
 
@@ -240,6 +237,28 @@ def verify_runtime_mounts(runtime, private, writer, secrets, *, historical=False
             raise DestinationMismatch('Mounted source differs from the local rehearsal files')
         hashes.extend(expected)
     return hashes
+
+
+def read_only_state(app):
+    try:
+        process = local_docker(
+            'exec', '-i', app, 'php', '-d', 'display_errors=0', '-d', 'log_errors=0',
+            input=(HERE/'read-state.php').read_bytes(), capture_output=True, timeout=90, check=True,
+        )
+        response = json.loads(process.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        raise RuntimeError('Local read-only Title inspection returned no usable response') from None
+    need(isinstance(response, dict), 'Local read-only Title inspection returned no usable response')
+    if response.get('blocker') == 'isolation':
+        raise ValueError('Local database isolation differs from the rehearsal')
+    if response.get('blocker') == 'page':
+        raise ValueError('Local Title page identity differs from the rehearsal')
+    if response.get('blocker') == 'signing_option':
+        raise ValueError('Expected an existing empty signing option')
+    need(response.get('post_id') == 716 and isinstance(response.get('title'), str) and
+         isinstance(response.get('epoch'), str) and re.fullmatch(r'[0-9a-f]{64}', response['epoch']) and
+         'elementor_data' in response, 'Local read-only Title inspection returned no usable response')
+    return response
 
 
 def title_command(app, payload):

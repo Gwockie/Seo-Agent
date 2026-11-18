@@ -1,6 +1,7 @@
 from hashlib import sha256
 import json
 from pathlib import Path
+from subprocess import CompletedProcess
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -23,6 +24,7 @@ class RuntimeRegistrationTests(unittest.TestCase):
 
     def register_fixture(self):
         (self.destination/locator.OPERATION_LOCK).write_bytes(b'0')
+        (self.destination/locator.ACTIVE_JOURNALS).mkdir()
         files = {}
         for name in locator.ACTIVE_FILES:
             path = self.destination/name
@@ -69,6 +71,14 @@ class RuntimeRegistrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'source is incompatible: save-title.php'):
             locator.load_registration(self.destination)
 
+    def test_missing_active_journals_prevents_registry_use(self):
+        self.register_fixture()
+        journals = self.destination/locator.ACTIVE_JOURNALS
+        journals.rmdir()
+        with self.assertRaisesRegex(ValueError, 'missing: app-rehearsals'):
+            locator.load_registration(self.destination)
+        self.assertFalse(journals.exists())
+
     def test_rejects_another_container_before_any_writer_probe(self):
         self.register_fixture()
         wrong = {**self.replacement, 'app': {'id': 'e'*64}}
@@ -88,6 +98,18 @@ class RuntimeRegistrationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'or it is running'):
                 run.Backend().read_state()
             probe.assert_not_called()
+
+    def test_missing_signing_option_blocks_read_without_wordpress_bootstrap(self):
+        process = CompletedProcess([], 0, stdout=b'{"blocker":"signing_option"}')
+        with patch.object(run.Backend, 'runtime_context', return_value=('pinned-app', 'destination')), patch.object(
+            run, 'local_docker', return_value=process
+        ) as docker, patch.object(run, 'title_command') as writer:
+            with self.assertRaisesRegex(ValueError, 'Expected an existing empty signing option'):
+                run.Backend().read_state()
+            writer.assert_not_called()
+        args, kwargs = docker.call_args
+        self.assertEqual(args[:4], ('exec', '-i', 'pinned-app', 'php'))
+        self.assertEqual(kwargs['input'], (runtime.HERE/'read-state.php').read_bytes())
 
     def test_migration_preserves_historical_bytes_and_exclusive_destinations(self):
         source = self.root/'source'

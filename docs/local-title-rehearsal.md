@@ -156,8 +156,11 @@ Both views use the registered runtime at
 This path is independent of the checkout and of the app's proposal workspace.
 The registration binds the replacement app and database IDs, exact read-only
 mounts, pinned writer and support files, and fresh two-page baseline. Missing
-registration, changed files, incompatible code and mismatched containers block
-execution. The app reads the registration and probes already running services.
+registration or journal directory, changed files, incompatible code and
+mismatched containers block execution. The app reads the registration and uses a read-only database
+transaction to observe the Title, heading binding and isolated database
+settings without loading WordPress. Apply and Restore repeat the live WordPress
+preflight as part of the explicit operation.
 Start the registered database and then the app outside the SEO app. The fixed
 container names end in `-stable-db` and `-stable-app`. Keep both retired
 disposable containers stopped because the replacement uses the same four

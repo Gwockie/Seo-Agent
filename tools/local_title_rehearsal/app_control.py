@@ -10,7 +10,8 @@ from seo_agent.coordination import BusyError, run_lock
 from seo_agent.local_title_rehearsal import forward_binding, inspect_attempt, require_observed_replacement
 from seo_agent.protection import ProtectionError, require_protected
 from . import proposal_binding as proposals, run
-from .locator import OPERATION_LOCK, RuntimeRegistrationError, load_registration, require_registered
+from .locator import ACTIVE_JOURNALS, OPERATION_LOCK, RuntimeRegistrationError, checked_path, load_registration, require_registered
+from .run import check_preflight
 from .runtime import need
 from .scope import CURRENT, HOME, PATHS, PROPOSED
 
@@ -37,7 +38,7 @@ class Status:
 
 
 def _root():
-    return run.RUNTIME_PRIVATE/'app-rehearsals'
+    return run.RUNTIME_PRIVATE/ACTIVE_JOURNALS
 
 
 def _read(path):
@@ -85,9 +86,7 @@ def _prior_rehearsals_settled(backend, runtime, history):
 
 
 def _journals(root):
-    if not root.exists():
-        return []
-    journals = sorted(root.iterdir())
+    journals = sorted(checked_path(root, directory=True).iterdir())
     need(all(path.is_dir() and path.name == f'run-{index:06d}'
              for index, path in enumerate(journals, 1)),
          'Unexpected app rehearsal history; preserve it and inspect the journal')
@@ -151,7 +150,8 @@ def _journal_status(directory, runtime, status):
 
 
 def _probe(backend, status):
-    # Bind and verify the mounted app before booting WordPress for probes.
+    # Opening a panel observes the registered baseline and live database using
+    # read-only queries. WordPress bootstrap can execute hooks that write.
     backend.destination()
     status.isolation = True
     run.retained_baseline()
@@ -162,9 +162,8 @@ def _probe(backend, status):
         for kind in ('raw', 'sanitized'):
             raw = (run.PRIVATE/f'before-{index}-{kind}.html').read_bytes()
             need(sha256(raw).hexdigest() == capture[f'{kind}_sha256'], 'Retained baseline capture digest differs')
-    run.check_preflight()
-    status.preflight = True
     status.title, epoch = backend.read_state()
+    status.preflight = True
     return epoch
 
 
@@ -302,6 +301,7 @@ def _safe_blocker(exc):
             r'Disposable runtime identity differs|Mounted (source differs|title writer differs)|'
             r'Current runtime differs|Local isolation source differs|Historical reviewed configuration drift|'
             r'Local service preflight command failed|Historical options screen rejected|'
+            r'Local read-only Title inspection|Local (database isolation|Title page identity) differs|'
             r'Passing retained preflight required|Historical baseline differs|Baseline must remain stopped|'
             r'Expected an existing empty signing option|Unexpected (rewrite rule destination|time format)|'
             r'Invalid representative heading data|Ambiguous representative heading source|Heading does not use expected|'
@@ -329,6 +329,8 @@ def execute(action, revision, *, store, sid, selection=None):
             journal = _inspect(status, backend, sid=sid, selection=selection)
             need(status.action and (action, revision) == (status.action, status.revision),
                  'The rehearsal changed or is blocked. Review the current state before acting.')
+            if action in (('forward',), ('restore',)):
+                check_preflight()
             if action == ('forward',):
                 # Serialize the final source check and dispatch with saved revisions.
                 store.require_private_write()
@@ -338,7 +340,7 @@ def execute(action, revision, *, store, sid, selection=None):
                     _selected_proposal(fresh, store, sid, selection)
                     need(fresh.proposal == status.proposal,
                          'The rehearsal changed before Apply. Review the saved revision and mapping.')
-                    journal.mkdir(parents=True, exist_ok=True)
+                    journal.mkdir(exist_ok=True)
                     require_protected(journal)
                     run.run_phase(action, backend, journal, binding=status.pending_binding)
             else:
