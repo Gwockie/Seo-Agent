@@ -288,3 +288,34 @@ class LocalTitleRehearsalTests(unittest.TestCase):
                     run.verify_rendered_restoration(backend, journal, baseline)
             verify.assert_not_called()
             self.assertEqual(backend.saves, 2)
+
+    def test_proposed_recapture_uses_fresh_bundles_and_retains_partial_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = Path(directory)
+            partial = journal / 'after-0-raw.html'
+            partial.write_bytes(b'earlier partial')
+            attempted = []
+
+            def capture_after(label, *, directory):
+                self.assertEqual(label, 'after')
+                self.assertNotEqual(directory, journal)
+                attempted.append(directory)
+                (directory / 'after-0-raw.html').write_bytes(b'captured HTML')
+                if len(attempted) == 1:
+                    (directory / 'after-captures.json').write_text('{')
+                    raise OSError('Capture interrupted')
+                (directory / 'after-captures.json').write_text('{}')
+
+            with patch.object(run, 'capture', side_effect=capture_after) as capture:
+                with self.assertRaisesRegex(OSError, 'Capture interrupted'):
+                    run.capture_proposed(journal)
+                self.assertIsNone(run.proposed_captures(journal))
+                run.capture_proposed(journal)
+                run.capture_proposed(journal)
+                self.assertEqual(capture.call_count, 2)
+
+            first, second = attempted
+            self.assertNotEqual(first, second)
+            self.assertEqual(run.proposed_captures(journal), second)
+            self.assertEqual((first / 'after-0-raw.html').read_bytes(), b'captured HTML')
+            self.assertEqual(partial.read_bytes(), b'earlier partial')

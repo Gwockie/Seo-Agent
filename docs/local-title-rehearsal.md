@@ -152,7 +152,9 @@ rehearsal directory and retained disposable Docker containers.
 4. If forward recovery observes the synthetic Title, `run.py restore` is the
    separate guarded operation that can restore the exact original Title. An
    intervening Title or a conflicting settled observation blocks the save. If
-   forward recovery observes the original Title, leave it in place and retain
+   proposed-state capture was interrupted, restoration can capture it in a fresh
+   directory while the synthetic Title is still present. If forward recovery
+   observes the original Title, leave it in place and retain
    the attempted journal. A different or unavailable Title requires evidence
    review. Never retry by changing an attempt name or moving a journal.
 5. Use `run.py verify` after restoration, including when `recover restore` observes

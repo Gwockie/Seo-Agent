@@ -227,15 +227,34 @@ print(json.dumps({'http_status':r.status,'headers':dict(r.getheaders()),'body':b
     record(label+'-captures', {'pages': records}, directory=directory)
 
 
+def proposed_captures(journal):
+    completed = [path for path in journal.glob('proposed-capture-*')
+                 if (path/'capture-complete').is_file()]
+    if (journal/'after-captures.json').is_file():
+        completed.append(journal)
+    need(len(completed) <= 1, 'Multiple proposed-state capture bundles; inspect the retained evidence')
+    return completed[0] if completed else None
+
+
+def capture_proposed(journal):
+    if proposed_captures(journal) is None:
+        directory = journal/f'proposed-capture-{new_id()}'
+        directory.mkdir()
+        capture('after', directory=directory)
+        (directory/'capture-complete').touch(exist_ok=False)
+
+
 def compare(before_label, after_label, *, current, proposed, journal, reverse=False, verification=None):
     declaration = load_scope()
 
     def capture_dir(label):
         if label == 'before':
             return PRIVATE
-        if label == 'restored' and verification is not None:
-            return verification
-        return journal
+        if label == 'after':
+            directory = proposed_captures(journal)
+            need(directory is not None, 'Proposed-state capture is unavailable')
+            return directory
+        return verification or journal
 
     left = json.loads((capture_dir(before_label)/(before_label+'-captures.json')).read_text())['pages']
     right = json.loads((capture_dir(after_label)/(after_label+'-captures.json')).read_text())['pages']
@@ -316,7 +335,7 @@ def verify_restoration(backend, journal, baseline):
 def verify_rendered_restoration(backend, journal, baseline):
     require_observed_replacement(backend, journal, 'restore', expected=PROPOSED, replacement=CURRENT)
     need(backend.read() == CURRENT, 'An intervening Title prevents restoration verification')
-    need((journal/'after-captures.json').is_file(),
+    need(proposed_captures(journal) is not None,
          'Restoration verification incomplete; the proposed-state capture is unavailable')
     # A controller can fail after a save or midway through capturing. Reobserve
     # into a fresh directory and leave every earlier artifact in place.
@@ -353,18 +372,17 @@ def run_phase(args, backend, journal):
         if phase == 'forward':
             result = save_forward(backend, journal, load_scope(), document_titles=baseline_document_titles())
             need(result['outcome'] == 'applied', 'Forward save not confirmed; recover without retrying')
-            capture('after', directory=journal)
+            capture_proposed(journal)
             compare('before', 'after', current=CURRENT, proposed=PROPOSED, journal=journal)
         elif phase == 'restore':
             require_observed_replacement(backend, journal, 'forward', expected=CURRENT, replacement=PROPOSED)
             need(backend.read() == PROPOSED, 'An intervening Title prevents restoration')
             load_scope()
             forward_capture_error = None
-            if not (journal/'after-captures.json').exists():
-                try:
-                    capture('after', directory=journal)
-                except (OSError, ValueError, RuntimeError) as exc:
-                    forward_capture_error = type(exc).__name__
+            try:
+                capture_proposed(journal)
+            except (OSError, ValueError, RuntimeError) as exc:
+                forward_capture_error = type(exc).__name__
             result = transition(backend, journal, 'restore', expected=PROPOSED, replacement=CURRENT)
             need(result['outcome'] == 'applied', 'Restoration not confirmed; recover without retrying')
             capture('restored', directory=journal)
