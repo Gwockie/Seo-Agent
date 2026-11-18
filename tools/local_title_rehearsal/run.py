@@ -5,9 +5,10 @@ import re
 import subprocess
 import sys
 from hashlib import sha256
+from pathlib import Path
 
 from tools.local_title_rehearsal.runtime import (
-    HERE, OLD, PRIVATE as RUNTIME_PRIVATE, PROJECT, clone, docker, inspect_baseline,
+    HERE, OLD, clone, docker, inspect_baseline,
     inspect_runtime, need, verify_historical_config,
 )
 from seo_agent.coordination import BusyError, run_lock
@@ -22,6 +23,11 @@ from tools.local_title_rehearsal.scope import PATHS, CURRENT, PROPOSED, HOME, va
 from tools.local_title_rehearsal.screening import SIGNING_OPTION, SIGNING_REJECTION, ScreeningRejected, screen_options
 
 
+# The existing containers bind files from this checkout. Keep their identity
+# and the shared operation lock fixed when the app runs from another checkout.
+RETAINED_CHECKOUT = Path.home()/'.codex/worktrees/e369/local-seo-agent'
+RUNTIME_PRIVATE = RETAINED_CHECKOUT/'.tmp/title-rehearsal-20261117'
+WRITER = RETAINED_CHECKOUT/'tools/local_title_rehearsal/save-title.php'
 PRIVATE = RUNTIME_PRIVATE / 'credential-screening-resume'
 JOURNAL = RUNTIME_PRIVATE / 'interruption-recovery'
 
@@ -32,7 +38,7 @@ def record(name, data, *, directory=PRIVATE):
 
 
 def inspect_retained_runtime():
-    runtime = inspect_runtime()
+    runtime = inspect_runtime(private=RUNTIME_PRIVATE, writer=WRITER)
     retained = json.loads((RUNTIME_PRIVATE/'running-isolation.json').read_text())
     if runtime != retained:
         raise DestinationMismatch('Disposable runtime identity differs from the retained rehearsal')
@@ -40,13 +46,13 @@ def inspect_retained_runtime():
 
 
 def preflight_command(*, sanitize=False):
-    inspect_retained_runtime()
+    runtime = inspect_retained_runtime()
     env = ['-e', 'LSEO_TITLE_SANITIZE=1' if sanitize else 'LSEO_TITLE_SANITIZE=0']
     # Keep raw option input in process memory. The usual Docker failure logger
     # would retain partial stdout on error, so this command has a fixed error.
     try:
         process = subprocess.run(
-            ['docker', 'exec', '-i', *env, PROJECT+'-app', 'php',
+            ['docker', 'exec', '-i', *env, runtime['app']['id'], 'php',
              '-d', 'display_errors=0', '-d', 'log_errors=0'],
             input=(HERE/'preflight.php').read_bytes(), capture_output=True, timeout=90,
         )
@@ -56,12 +62,15 @@ def preflight_command(*, sanitize=False):
         raise ValueError('Local service preflight command failed without a usable response') from None
 
 
-def preflight():
+def check_preflight():
     verify_historical_config()
     data = preflight_command()
     sys.path.insert(0, str(OLD))
-    from screen import inspect as historical_inspect, loads
-    from inert_serialized import parse
+    try:
+        from screen import inspect as historical_inspect, loads
+        from inert_serialized import parse
+    finally:
+        sys.path.remove(str(OLD))
     # Validate the same two core formats/routes separately from the historical parser.
     options = {row['option_name']: row['option_value'] for row in data.pop('options')}
     need(options.pop('time_format', None) in ('H:i', 'g:i a'), 'Unexpected time format')
@@ -70,13 +79,7 @@ def preflight():
         isinstance(key, str) and len(key) < 1000 and isinstance(value, str) and
         re.fullmatch(r'index\.php\?[A-Za-z0-9_=&$\[\]/.%-]+', value)
         for key, value in routes.items()), 'Unexpected rewrite rule destination')
-    try:
-        screened = screen_options(options, historical_inspect, parse, loads)
-    except ScreeningRejected as exc:
-        suffix = '-after-sanitize' if (PRIVATE/'sanitization-attempt.json').exists() else ''
-        record('screening-rejection'+suffix, {'observed_utc': utc_now(), **exc.diagnostic})
-        print(json.dumps(exc.diagnostic))
-        raise SystemExit('Historical options screen rejected the input') from None
+    screened = screen_options(options, historical_inspect, parse, loads)
     need(options.get(SIGNING_OPTION) == '', 'Expected an existing empty signing option')
     try:
         document = json.loads(data.pop('elementor_data'))
@@ -95,8 +98,19 @@ def preflight():
     binding = selected[0]['settings'].get('__dynamic__', {}).get('title', '')
     need('name="post-title"' in binding and 'settings="%7B%7D"' in binding,
          'Heading does not use expected Post Title binding')
-    record('preflight', {**data, 'options_screening': screened, 'signing_option_empty': True,
-                         'post_title_binding_verified': True, 'observed_utc': utc_now()})
+    return {**data, 'options_screening': screened, 'signing_option_empty': True,
+            'post_title_binding_verified': True, 'observed_utc': utc_now()}
+
+
+def preflight():
+    try:
+        data = check_preflight()
+    except ScreeningRejected as exc:
+        suffix = '-after-sanitize' if (PRIVATE/'sanitization-attempt.json').exists() else ''
+        record('screening-rejection'+suffix, {'observed_utc': utc_now(), **exc.diagnostic})
+        print(json.dumps(exc.diagnostic))
+        raise SystemExit('Historical options screen rejected the input') from None
+    record('preflight', data)
 
 
 def sanitize():
@@ -142,10 +156,10 @@ class Backend:
         try:
             runtime = inspect_retained_runtime()
             app = runtime['app']['id']
-            checksums = docker('exec', app, 'sha256sum', *paths).decode()
+            checksums = docker('exec', app, 'sha256sum', *paths, diagnostic_dir=None).decode()
         except subprocess.SubprocessError:
             raise RuntimeError('Docker returned no usable runtime evidence') from None
-        local = (HERE/'save-title.php', RUNTIME_PRIVATE/'wp-config.php', RUNTIME_PRIVATE/'isolation.php')
+        local = (WRITER, RUNTIME_PRIVATE/'wp-config.php', RUNTIME_PRIVATE/'isolation.php')
         hashes = [sha256(path.read_bytes()).hexdigest() for path in local]
         if checksums.splitlines() != [f'{digest}  {path}' for digest, path in zip(hashes, paths)]:
             raise DestinationMismatch('Mounted source differs from the local rehearsal files')
@@ -193,7 +207,7 @@ class Backend:
 
 
 def capture(label, *, directory=PRIVATE):
-    inspect_retained_runtime()
+    runtime = inspect_retained_runtime()
     spec = importlib.util.spec_from_file_location('reviewed_preview', OLD/'preview_proxy.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -211,7 +225,8 @@ r=conn.getresponse(); data=r.read(2000001)
 assert r.status==200 and len(data)<=2000000
 print(json.dumps({'http_status':r.status,'headers':dict(r.getheaders()),'body':base64.b64encode(data).decode()}))
 '''.replace('PATH', repr(path))
-        observed = json.loads(docker('exec', '-i', PROJECT+'-app', 'python3', '-', input=script.encode(), timeout=90))
+        observed = json.loads(docker('exec', '-i', runtime['app']['id'], 'python3', '-', input=script.encode(),
+                                     timeout=90, diagnostic_dir=directory))
         import base64
         raw = base64.b64decode(observed.pop('body'))
         raw.decode('utf-8')  # No replacement decoding of source evidence.
@@ -321,7 +336,7 @@ def verify_restoration(backend, journal, baseline):
         before = (PRIVATE/f'before-{index}-sanitized.html').read_bytes()
         restored = (journal/f'restored-{index}-sanitized.html').read_bytes()
         exact.append({'path': path, 'exact_restoration': before == restored})
-    sources = clone('manifest')
+    sources = clone('manifest', diagnostic_dir=journal)
     source_unchanged = sources == json.loads((RUNTIME_PRIVATE/'clone.json').read_text())['source_manifest']
     baseline_unchanged = inspect_baseline() == baseline['baseline']
     record('restoration-verified', {'raw_title_exact': raw_title_exact, 'pages': exact,

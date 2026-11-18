@@ -23,13 +23,16 @@ def is_busy(root):
 
 
 @contextmanager
-def run_lock(path):
+def run_lock(path, *, create=True):
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+b") as handle:
+    if create:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b" if create else "r+b") as handle:
         try:
             handle.seek(0)
             if not handle.read(1):
+                if not create:
+                    raise ValueError("The retained operation lock is empty")
                 handle.write(b"0")
                 handle.flush()
             handle.seek(0)
