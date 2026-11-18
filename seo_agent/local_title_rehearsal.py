@@ -28,11 +28,12 @@ def _unique_fields(items):
     return value
 
 
-def _load(path, fields):
+def _load(path, fields, *, optional=()):
     try:
         raw = path.read_bytes()
         value = json.loads(raw, object_pairs_hook=_unique_fields)
-        if (not isinstance(value, dict) or set(value) != set(fields.split()) | {'observed_utc'} or
+        required = set(fields.split()) | {'observed_utc'}
+        if (not isinstance(value, dict) or set(value) - set(optional) != required or
                 datetime.fromisoformat(value['observed_utc']).utcoffset() != timedelta(0)):
             raise ValueError('Malformed record')
     except (OSError, ValueError, TypeError):
@@ -64,7 +65,7 @@ def _state(backend):
     return title, epoch
 
 
-def transition(backend, directory, name, *, expected, replacement):
+def transition(backend, directory, name, *, expected, replacement, binding=None):
     """Attempt once and reconcile by reading. The CLI coordinates the caller lock."""
     attempt, result_path = _paths(directory, name)
     _title_pair(expected, replacement)
@@ -78,12 +79,19 @@ def transition(backend, directory, name, *, expected, replacement):
     if not _digest(destination):
         raise ValueError('Invalid local destination evidence')
     observed, writer_epoch = _state(backend)
+    context = {}
+    if binding is not None:
+        if (name != 'forward' or (binding['destination_sha256'], binding['writer_epoch'],
+                                  binding['baseline'], binding['replacement']) !=
+                (destination, writer_epoch, expected, replacement)):
+            raise ValueError('The rehearsal changed before the forward transition')
+        context = {'binding': binding}
     if observed != expected:
-        result = {'outcome': 'conflict', 'expected': expected, 'actual': observed, 'write_attempted': False}
+        result = {'outcome': 'conflict', 'expected': expected, 'actual': observed, 'write_attempted': False, **context}
         _record(result_path, result)
         return result
     _record(attempt, {'expected': expected, 'replacement': replacement, 'outcome': 'attempted',
-                      'destination': destination, 'writer_epoch': writer_epoch})
+                      'destination': destination, 'writer_epoch': writer_epoch, **context})
     attempt_digest = sha256(attempt.read_bytes()).hexdigest()
     response = None
     error = None
@@ -127,11 +135,18 @@ def _observation(actual, expected, replacement):
 def _history(directory, name, expected, replacement):
     attempt_path, result_path = _paths(directory, name)
     _title_pair(expected, replacement)
-    attempt, digest = _load(attempt_path, 'expected replacement outcome destination writer_epoch')
+    attempt, digest = _load(attempt_path, 'expected replacement outcome destination writer_epoch',
+                            optional=('binding',) if name == 'forward' else ())
     if (attempt['outcome'] != 'attempted' or attempt['expected'] != expected or
             attempt['replacement'] != replacement or not _digest(attempt['destination']) or
             not _digest(attempt['writer_epoch'])):
         raise ValueError(f'{attempt_path.name} differs from the exact transition or lacks writer provenance')
+    if 'binding' in attempt:
+        binding = attempt['binding']
+        if not isinstance(binding, dict) or (binding.get('destination_sha256'), binding.get('writer_epoch'),
+                binding.get('baseline'), binding.get('replacement')) != (
+                attempt['destination'], attempt['writer_epoch'], expected, replacement):
+            raise ValueError('Forward attempt differs from its proposal binding')
     result = None
     if result_path.exists():
         result, _ = _load(result_path, 'outcome actual response error_type write_attempted attempt_sha256')
@@ -215,7 +230,8 @@ def inspect_attempt(directory, name, *, expected, replacement):
     if not attempt_path.exists() and not recovery_paths:
         if not result_path.exists():
             return None
-        result, _ = _load(result_path, 'outcome expected actual write_attempted')
+        result, _ = _load(result_path, 'outcome expected actual write_attempted',
+                          optional=('binding',) if name == 'forward' else ())
         if (result['outcome'] != 'conflict' or result['expected'] != expected or
                 not isinstance(result['actual'], str) or result['actual'] == expected or
                 result['write_attempted'] is not False):
@@ -228,3 +244,17 @@ def inspect_attempt(directory, name, *, expected, replacement):
             'observations': observations, 'replacement_observed': replaced,
             'recoverable': not replaced and not any(obs['actual'] is not None for obs in observations),
             'writer_epoch': attempt['writer_epoch']}
+
+
+def forward_binding(directory):
+    """The forward attempt is the durable source of its original proposal context."""
+    attempt, result = _paths(directory, 'forward')
+    if attempt.exists():
+        value, _ = _load(attempt, 'expected replacement outcome destination writer_epoch', optional=('binding',))
+    elif result.exists():
+        value, _ = _load(result, 'outcome expected actual write_attempted', optional=('binding',))
+    else:
+        return None
+    if 'binding' in value and not isinstance(value['binding'], dict):
+        raise ValueError('Invalid forward proposal binding')
+    return value.get('binding')

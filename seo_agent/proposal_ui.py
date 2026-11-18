@@ -133,4 +133,6 @@ def editor(store, sid, record):
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))
+    from .local_title_rehearsal_ui import render_proposal
+    render_proposal(store, sid, record)
     assessment_ui(store, sid, record)

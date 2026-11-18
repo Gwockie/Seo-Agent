@@ -276,7 +276,7 @@ class LocalTitleRehearsalTests(unittest.TestCase):
             self.assertEqual([call.args for call in compare.call_args_list],
                              [('before', 'after'), ('after', 'restored')])
             self.assertTrue(compare.call_args.kwargs['reverse'])
-            verify.assert_called_once_with(backend, location, baseline)
+            verify.assert_called_once_with(backend, location, baseline, binding=None)
             self.assertEqual(partial.read_bytes(), b'partial original capture')
             self.assertFalse((journal / 'restore-result.json').exists())
             self.assertEqual(backend.saves, 2)

@@ -124,20 +124,37 @@ snapshot, approval or receipt records or changing that public-URL restriction.
 Restoration verification requires exact raw Title equality, reverse declared checks and
 exact sanitized baseline bytes; unrelated timestamps/revision rows need not revert.
 
-## Hosting & CMS rehearsal
+## Rehearse a saved proposal
 
 Launch the loopback app from the feature checkout with
 `python -m seo_agent app --demo --local-title-rehearsal`. Select **Demo psychology A**,
-then **Hosting & CMS**. The disposable section appears only with this launch flag
-on that synthetic site. It uses the fixed containers and protected evidence in the
-retained `e369` rehearsal checkout. The screen can report a stopped or unavailable
-runtime without starting any service.
+then open the selected audit in **Recommendations & changes**. Use a saved `text`
+proposal on `https://psychology-a.example/psychological-assessments-paoli/` with a
+reviewed Post Title mapping to page `716` and widget `022c973`. The proposal must
+use the fixed original raw Title as its baseline. The app explicitly maps that
+synthetic source to the fixed Docker page and validates the Post Title widget in
+the local runtime. Plain text must also meet the writer byte bound and the
+unchanged raw and literal verification rules.
 
-The four controls apply the fixed synthetic Title, recover an interrupted attempt,
-restore the original Title, and verify restoration. Readback and rendered checks
-have separate status displays. Recovery records an observation and uses the same
-writer-generation checks described below. When fencing is needed, stop and start
-only the retained disposable app outside the SEO app and re-open the screen.
+Open **Rehearse this proposal on local staging** to review the saved revision,
+observed local baseline, replacement, destination and declared effects. Pending
+owner or clinician questions remain pending and are displayed with the staging
+draft. **Apply saved Title** rechecks the stored revision, mapping, writer
+generation, scope and raw Title. Form edits enter this flow after saving a new
+revision. Rehearsal status grants no production approval or SiteGround assurance.
+
+The forward journal freezes the source site, audit, action ID, revision, proposal
+digest, destination, raw Title pair and digests for the two-page scope and baseline
+captures. Raw readback and reconciliation observations, rendered checks and
+restoration verification have separate displays. A subsequent edit makes earlier
+results historical in the proposal panel. Recovery and restoration still use the
+original journal. **Hosting & CMS** also provides those controls for the active
+run on the source site, including retained runs from before proposal binding.
+
+Both views use the fixed containers and protected evidence in the retained `e369`
+checkout. A stopped or unavailable runtime is reported without starting services.
+When fencing is needed, stop and start only the retained disposable app outside
+the SEO app and reopen the screen.
 
 App runs are stored in `app-rehearsals/run-000001` and subsequent numbered directories
 inside the protected rehearsal directory. A subsequent run requires an observed

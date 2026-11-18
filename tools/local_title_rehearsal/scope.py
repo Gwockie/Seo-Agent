@@ -1,7 +1,9 @@
 """Exact rendered-check contract for this one disposable page-title test."""
 from dataclasses import asdict
+import re
 
 from seo_agent.local_title_rehearsal import transition
+from seo_agent.page_tracking import text_value
 from seo_agent.post_title_effects import TitleEffect
 from seo_agent.publication_verification import Effect
 
@@ -22,8 +24,19 @@ NAVIGATION = tuple(
 LITERAL_NAVIGATION = tuple(selector.partition('[href=')[0] for selector in NAVIGATION)
 
 
-def expected_scope(document_titles):
+def validate_replacement(value):
+    # WordPress's byte bound and the literal and raw rendered verifiers all apply.
+    # Exclude text that WordPress typography filters can rewrite on this route.
+    if (not isinstance(value, str) or not value or value == CURRENT or text_value(value) != value or
+            any(c in '<>&\'"' or ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in value) or
+            len(value.encode('utf-8')) > 500 or re.search(r'--|\.\.\.|\(tm\)|\d+x\d+', value, re.I)):
+        raise ValueError('Unsupported local Title text. Use distinct literal text with single spaces and no markup or typography substitutions.')
+    return value
+
+
+def expected_scope(document_titles, *, replacement=PROPOSED):
     """Declare the fixed locations, transitions and unchanged metadata explicitly."""
+    validate_replacement(replacement)
     if (not isinstance(document_titles, (list, tuple)) or len(document_titles) != 2 or
             any(not isinstance(title, str) or not title for title in document_titles) or
             not document_titles[0].startswith(CURRENT) or document_titles[0].count(CURRENT) != 1):
@@ -34,15 +47,15 @@ def expected_scope(document_titles):
         literals = [TitleEffect(selector) for selector in LITERAL_NAVIGATION]
         # The publication verifier deliberately treats hidden dropdown ancestors
         # as unavailable. The literal verifier still checks all four instances.
-        publication = [Effect(kind='navigation_label', selector=selector, before=CURRENT, after=PROPOSED)
+        publication = [Effect(kind='navigation_label', selector=selector, before=CURRENT, after=replacement)
                        for selector in NAVIGATION[::2]]
         if index == 0:
             literals = [TitleEffect('head > title', suffix=suffix), TitleEffect(HEADING),
                         TitleEffect(BREADCRUMB), *literals]
-            publication = [Effect(kind='heading', selector=HEADING, before=CURRENT, after=PROPOSED),
-                           Effect(kind='breadcrumb', selector=BREADCRUMB, before=CURRENT, after=PROPOSED),
+            publication = [Effect(kind='heading', selector=HEADING, before=CURRENT, after=replacement),
+                           Effect(kind='breadcrumb', selector=BREADCRUMB, before=CURRENT, after=replacement),
                            *publication]
-            after_title = PROPOSED + suffix
+            after_title = replacement + suffix
         else:
             publication = [Effect(kind='heading', selector=CONTACT_HEADING, before='Contact Us', after='Contact Us'),
                            *publication]
@@ -56,9 +69,9 @@ def expected_scope(document_titles):
     return {'pages': pages}
 
 
-def validate_scope(declaration, *, document_titles):
+def validate_scope(declaration, *, document_titles, replacement=PROPOSED):
     """Reject missing/extra pages, locations, rules or values before any write."""
-    expected = expected_scope(document_titles)
+    expected = expected_scope(document_titles, replacement=replacement)
     if (not isinstance(declaration, dict) or set(declaration) != {'pages'} or
             not isinstance(declaration['pages'], list) or len(declaration['pages']) != len(PATHS)):
         raise ValueError('Declare exactly the two fixed pages in capture order')
@@ -83,7 +96,8 @@ def validate_scope(declaration, *, document_titles):
     return {'pages': normalized}
 
 
-def save_forward(backend, directory, declaration, *, document_titles):
+def save_forward(backend, directory, declaration, *, document_titles, binding=None):
     """Scope rejection must occur before invoking even the backend's read method."""
-    validate_scope(declaration, document_titles=document_titles)
-    return transition(backend, directory, 'forward', expected=CURRENT, replacement=PROPOSED)
+    replacement = binding['replacement'] if binding is not None else PROPOSED
+    validate_scope(declaration, document_titles=document_titles, replacement=replacement)
+    return transition(backend, directory, 'forward', expected=CURRENT, replacement=replacement, binding=binding)
