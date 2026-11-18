@@ -28,42 +28,55 @@ def record(name, data):
         json.dump(data, stream, indent=2)
 
 
-def docker(*args, input=None, timeout=90):
+def docker(*args, input=None, timeout=90, diagnostic_dir=PRIVATE):
     process = subprocess.run(['docker', *args], input=input, capture_output=True, timeout=timeout)
     if process.returncode:
+        if diagnostic_dir is None:
+            raise RuntimeError('Docker command failed without usable local evidence')
         import uuid
         name = 'docker-failure-' + uuid.uuid4().hex
-        (PRIVATE / (name + '.log')).write_bytes(process.stdout + b'\n' + process.stderr)
+        (diagnostic_dir / (name + '.log')).write_bytes(process.stdout + b'\n' + process.stderr)
         raise RuntimeError('Docker failed; private diagnostic ' + name)
     return process.stdout
+
+
+def inspect_docker(*args):
+    """Read-only inspection, including when Docker is stopped or inaccessible."""
+    try:
+        result = subprocess.run(['docker', *args], capture_output=True, timeout=15, check=True)
+        return json.loads(result.stdout)[0]
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        raise RuntimeError('Docker inspection unavailable. Check Docker Desktop and the retained containers.') from None
 
 
 def inspect_baseline():
     result = {}
     for role in ('app', 'db', 'ingress'):
-        item = json.loads(docker('inspect', BASE + '-' + role + '-1'))[0]
+        item = inspect_docker('inspect', BASE + '-' + role + '-1')
         need(not item['State']['Running'], 'Baseline must remain stopped for physical copy')
         need(item['Config']['Labels']['com.docker.compose.project'] == BASE, 'Wrong baseline')
         result[role] = {'id': item['Id'], 'image': item['Image'], 'state': item['State']['Status']}
     return result
 
 
-def inspect_runtime():
+def inspect_runtime(*, private=PRIVATE, writer=HERE/'save-title.php', require_running=True):
     result = {}
     for role, image, user, volumes, binds in (
         ('db', DBIMAGE, 'mysql', {'/var/lib/mysql': ('database', True), '/run/lseo-db': ('dbsocket', True)},
          {'/run/secrets/db-root': SECRETS/'db-root', '/run/secrets/db-user': SECRETS/'db-user'}),
         ('app', IMAGE, '33:33', {'/var/www/html': ('site', True), '/run/lseo-db': ('dbsocket', False),
                                 '/run/lseo-http': ('httpsocket', True)},
-         {'/var/www/html/wp-config.php': PRIVATE/'wp-config.php',
-          '/var/www/html/wp-content/mu-plugins/000-local-isolation.php': PRIVATE/'isolation.php',
-          '/opt/lseo/save-title.php': HERE/'save-title.php',
+         {'/var/www/html/wp-config.php': private/'wp-config.php',
+          '/var/www/html/wp-content/mu-plugins/000-local-isolation.php': private/'isolation.php',
+          '/opt/lseo/save-title.php': writer,
           '/run/secrets/db-user': SECRETS/'db-user', '/run/secrets/wp-salts': SECRETS/'wp-salts'})):
-        item = json.loads(docker('inspect', PROJECT + '-' + role))[0]
+        item = inspect_docker('inspect', PROJECT + '-' + role)
         host, config = item['HostConfig'], item['Config']
-        pinned = json.loads(docker('image', 'inspect', image))[0]['Id']
+        pinned = inspect_docker('image', 'inspect', image)['Id']
         need(item['Image'] == pinned and config['User'] == user, 'Wrong image or runtime user')
-        need(item['State']['Running'], 'Disposable service is stopped')
+        if require_running:
+            need(item['State']['Running'] and not item['State']['Paused'],
+                 f'Disposable Docker service {role} is stopped or paused')
         need(host['NetworkMode'] == 'none' and not host['PortBindings'] and not item['NetworkSettings']['Ports'], 'Network exposure')
         need(host['ReadonlyRootfs'] and host['CapDrop'] == ['ALL'] and not host.get('CapAdd') and
              not host['Privileged'] and 'no-new-privileges' in host['SecurityOpt'], 'Unsafe capabilities')
@@ -81,7 +94,7 @@ def inspect_runtime():
     return result
 
 
-def clone(mode):
+def clone(mode, *, diagnostic_dir=PRIVATE):
     args = ['run', '--rm', '--network', 'none', '--read-only', '--user', '0', '--cap-drop', 'ALL',
             '--cap-add', 'DAC_OVERRIDE', '--cap-add', 'CHOWN', '--cap-add', 'FOWNER',
             '--security-opt', 'no-new-privileges']
@@ -91,7 +104,7 @@ def clone(mode):
             args += ['--mount', f'type=volume,source={PROJECT}_{role},target=/target/{role}']
     args += ['--mount', f'type=bind,source={HERE / "clone-volumes.py"},target=/tool.py,readonly',
              '--entrypoint', 'python3', IMAGE, '/tool.py', mode]
-    return json.loads(docker(*args, timeout=180))
+    return json.loads(docker(*args, timeout=180, diagnostic_dir=diagnostic_dir))
 
 
 def verify_historical_config():

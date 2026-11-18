@@ -198,8 +198,33 @@ def require_observed_replacement(backend, directory, name, *, expected, replacem
     attempt, _, result, observations = _history(directory, name, expected, replacement)
     if backend.destination() != attempt['destination']:
         raise ValueError(f'Current runtime differs from the recorded {name} destination')
-    settled = {obs['observation'] for obs in observations if obs['actual'] is not None}
-    eligible = (settled == {'proposed_value_observed'} if observations else
-                result and result['outcome'] == 'applied')
-    if not eligible:
+    if not _replacement_observed(result, observations):
         raise ValueError(f'A confirmed or recovered proposed Title is required; inspect the {name} journal')
+
+
+def _replacement_observed(result, observations):
+    settled = {obs['observation'] for obs in observations if obs['actual'] is not None}
+    return (settled == {'proposed_value_observed'} if observations else
+            result is not None and result['outcome'] == 'applied')
+
+
+def inspect_attempt(directory, name, *, expected, replacement):
+    """Derive action availability from the same history used for guarded writes."""
+    attempt_path, result_path = _paths(directory, name)
+    recovery_paths = list(attempt_path.parent.glob(f'{name}-recovery-*.json'))
+    if not attempt_path.exists() and not recovery_paths:
+        if not result_path.exists():
+            return None
+        result, _ = _load(result_path, 'outcome expected actual write_attempted')
+        if (result['outcome'] != 'conflict' or result['expected'] != expected or
+                not isinstance(result['actual'], str) or result['actual'] == expected or
+                result['write_attempted'] is not False):
+            raise ValueError('Invalid pre-dispatch conflict record')
+        return {'outcome': 'conflict', 'result': result, 'observations': [],
+                'recoverable': False, 'replacement_observed': False, 'writer_epoch': None}
+    attempt, _, result, observations = _history(directory, name, expected, replacement)
+    replaced = _replacement_observed(result, observations)
+    return {'outcome': result['outcome'] if result else 'interrupted', 'result': result,
+            'observations': observations, 'replacement_observed': replaced,
+            'recoverable': not replaced and not any(obs['actual'] is not None for obs in observations),
+            'writer_epoch': attempt['writer_epoch']}

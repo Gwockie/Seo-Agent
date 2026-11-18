@@ -124,6 +124,27 @@ snapshot, approval or receipt records or changing that public-URL restriction.
 Restoration verification requires exact raw Title equality, reverse declared checks and
 exact sanitized baseline bytes; unrelated timestamps/revision rows need not revert.
 
+## Hosting & CMS rehearsal
+
+Launch the loopback app from the feature checkout with
+`python -m seo_agent app --demo --local-title-rehearsal`. Select **Demo psychology A**,
+then **Hosting & CMS**. The disposable section appears only with this launch flag
+on that synthetic site. It uses the fixed containers and protected evidence in the
+retained `e369` rehearsal checkout. The screen can report a stopped or unavailable
+runtime without starting any service.
+
+The four controls apply the fixed synthetic Title, recover an interrupted attempt,
+restore the original Title, and verify restoration. Readback and rendered checks
+have separate status displays. Recovery records an observation and uses the same
+writer-generation checks described below. When fencing is needed, stop and start
+only the retained disposable app outside the SEO app and re-open the screen.
+
+App runs are stored in `app-rehearsals/run-000001` and subsequent numbered directories
+inside the protected rehearsal directory. A subsequent run requires an observed
+restoration and passing explicit verification of the previous run. An interruption
+that leaves only evidence of the original value, or leaves incomplete rendered
+evidence, requires journal review before another run. Keep all records in place.
+
 ## Recover an interrupted attempt
 
 Run from the attached rehearsal checkout with the repository's Python dependencies
