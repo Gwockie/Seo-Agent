@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -18,7 +19,7 @@ from tools.local_title_rehearsal.scope import CURRENT, HOME, PATHS, PROPOSED, ex
 class RehearsalUITests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
+        self.addCleanup(self.cleanup_fixture, temporary)
         self.root = Path(temporary.name)
         self.backend = Backend()
         self.backend.title = CURRENT
@@ -46,6 +47,17 @@ class RehearsalUITests(unittest.TestCase):
     def use(self, patcher):
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def cleanup_fixture(temporary):
+        try:
+            temporary.cleanup()
+        except PermissionError as exc:
+            if getattr(exc, 'winerror', None) != 32:
+                raise
+            # A short-lived Windows handle can outlast the Streamlit test run.
+            time.sleep(0.25)
+            temporary.cleanup()
 
     def probe(self, backend, status):
         if self.failure:
@@ -173,3 +185,56 @@ class RehearsalUITests(unittest.TestCase):
         self.assertTrue(any('intervening raw Title' in warning.value for warning in app.warning))
         self.assertEqual(self.backend.saves, 1)
         self.assertFalse((control._root()/'run-000001'/'restore-attempt.json').exists())
+
+    def test_duplicate_url_cannot_see_existing_journal_or_offer_actions(self):
+        status = control.inspect()
+        control.execute(status.action, status.revision)
+        store = Store(self.workspace)
+        original = store.site(self.ids['Demo psychology A'])
+        duplicate = original.model_copy(update={'name': 'Duplicate', 'gsc_property': 'sc-domain:psychology-a.example'})
+        self.ids['Duplicate'] = store.save_site(duplicate)
+        app = self.open('Duplicate')
+        self.assertFalse(any('synthetic Title' in button.label for button in app.button))
+        self.assertFalse(any('run-000001' in row.value for row in app.text))
+        app.sidebar.selectbox[0].select(self.ids['Demo psychology A']).run()
+        self.assertFalse(any('synthetic Title' in button.label for button in app.button))
+        self.assertEqual(self.backend.saves, 1)
+
+    def test_partial_rendered_reports_preserve_guarded_restore_and_verification(self):
+        status = control.inspect()
+        control.execute(status.action, status.revision)
+        journal = control._root()/'run-000001'
+        forward_report = journal/'before-to-after-verification.json'
+        forward_report.write_text('{"pages": [', encoding='utf-8')
+        app = self.open()
+        self.assertFalse(self.button(app, 'restore').disabled)
+        self.assertTrue(any('Incomplete rendered evidence' in line.value for line in app.caption))
+        self.button(app, 'restore').click().run()
+        partial = journal/'verification-interrupted'
+        partial.mkdir()
+        (partial/'restoration-verified.json').write_text('{"raw_title_exact":', encoding='utf-8')
+        app.run()
+        self.assertTrue(self.button(app, 'forward').disabled)
+        self.assertFalse(self.button(app, 'verify').disabled)
+        self.button(app, 'verify').click().run()
+        self.assertTrue(app.success)
+        self.assertEqual(forward_report.read_text(encoding='utf-8'), '{"pages": [')
+        self.assertTrue(partial.exists())
+        self.assertEqual(self.backend.saves, 2)
+
+    def test_malformed_elementor_data_displays_preflight_blocker(self):
+        for document in ({}, [{'elements': [False]}],
+                         [{'id': '022c973', 'settings': {'__dynamic__': []}}]):
+            data = {'elementor_data': json.dumps(document)}
+            with patch.multiple(run, verify_historical_config=lambda: None, preflight_command=lambda: data):
+                with self.assertRaisesRegex(ValueError, 'Invalid representative heading data'):
+                    run.check_preflight()
+        with patch.multiple(run, verify_historical_config=lambda: None,
+                            preflight_command=lambda: {'elementor_data': '{}'}), patch.object(
+            control, '_probe', side_effect=lambda *_: run.check_preflight()
+        ):
+            app = self.open()
+            self.assertTrue(any('Invalid representative heading data' in line.value for line in app.warning))
+            self.assertTrue(self.button(app, 'forward').disabled)
+            self.assertFalse(app.exception)
+        self.assertEqual(self.backend.saves, 0)

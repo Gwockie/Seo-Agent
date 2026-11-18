@@ -46,11 +46,14 @@ def _restored(directory, runtime):
     path = directory/'restoration-verified.json'
     if not path.is_file():
         return False
-    value = _read(path)
-    return (value['runtime'] == runtime and value['raw_title_exact'] is True and
-            value['baseline_volume_manifests_unchanged'] is True and
-            value['baseline_containers_unchanged'] is True and
-            value['pages'] == [{'path': path, 'exact_restoration': True} for path in PATHS])
+    try:
+        value = _read(path)
+        return (value['runtime'] == runtime and value['raw_title_exact'] is True and
+                value['baseline_volume_manifests_unchanged'] is True and
+                value['baseline_containers_unchanged'] is True and
+                value['pages'] == [{'path': path, 'exact_restoration': True} for path in PATHS])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 
 def _prior_rehearsals_settled(backend, runtime):
@@ -83,19 +86,24 @@ def _journals(root):
 def _rendered(path):
     if not path.is_file():
         return None
-    result = []
-    for index, page in enumerate(_read(path)['pages']):
-        checks = page['publication_effects']
-        need(index < len(PATHS) and page['url'] == HOME + PATHS[index] and
-             len(checks) == (8, 7)[index], 'Incomplete rendered report')
-        result.append({
-            'page': PATHS[index],
-            'literal': page['literal_title_effects']['status'],
-            'raw_checks': sum(check['status'] == 'matches_expectation' for check in checks),
-            'declared_raw_checks': len(checks),
-        })
-    need(len(result) == len(PATHS), 'Incomplete rendered report')
-    return {'report': path.name, 'pages': result}
+    try:
+        result = []
+        for index, page in enumerate(_read(path)['pages']):
+            checks = page['publication_effects']
+            literal = page['literal_title_effects']['status']
+            need(index < len(PATHS) and page['url'] == HOME + PATHS[index] and
+                 len(checks) == (8, 7)[index] and literal in ('matches_expectation', 'failed'),
+                 'Incomplete rendered report')
+            result.append({
+                'page': PATHS[index], 'literal': literal,
+                'raw_checks': sum(check['status'] == 'matches_expectation' for check in checks),
+                'declared_raw_checks': len(checks),
+            })
+        need(len(result) == len(PATHS), 'Incomplete rendered report')
+        return {'report': path.name, 'pages': result}
+    except (OSError, ValueError, KeyError, TypeError):
+        # An interrupted comparison must not hide or gate raw-state actions.
+        return {'report': path.name, 'pages': []}
 
 
 def _journal_status(directory, runtime, status):
@@ -105,21 +113,20 @@ def _journal_status(directory, runtime, status):
     need(not status.restore or (status.forward and status.forward['replacement_observed']),
          'Restoration history lacks an observed forward Title')
     reports = ('before-to-after-verification.json', 'after-to-restored-verification.json')
-    locations = {'Forward and restoration captures': directory}
-    completed = sorted(p for p in directory.glob('verification-*') if p.is_dir()
-                       and (p/'restoration-verified.json').is_file())
-    for verification in completed:
-        if _restored(verification, runtime):
-            # The backend writes restoration-verified last, after both comparisons.
-            paired = [_rendered(verification/name) for name in reports]
-            need(all(report and all(page['literal'] == 'matches_expectation' and
-                                    page['raw_checks'] == page['declared_raw_checks'] for page in report['pages'])
-                     for report in paired), 'Restoration evidence lacks passing rendered comparisons')
-            status.verified = True
-        locations['Restoration verification ' + verification.name] = verification
-    for label, location in locations.items():
-        status.rendered.extend({'capture': label, **report} for name in reports
-                               if (report := _rendered(location/name)) is not None)
+    status.rendered.extend({'capture': 'Forward and restoration captures', **report} for name in reports
+                           if (report := _rendered(directory/name)) is not None)
+    for verification in sorted(p for p in directory.glob('verification-*') if p.is_dir()):
+        paired = [_rendered(verification/name) for name in reports]
+        # The backend writes the final raw and baseline evidence after both comparisons.
+        complete = _restored(verification, runtime) and all(
+            report and report['pages'] and all(
+                page['literal'] == 'matches_expectation' and page['raw_checks'] == page['declared_raw_checks']
+                for page in report['pages']) for report in paired)
+        status.verified |= complete
+        label = 'Restoration verification ' + verification.name
+        status.rendered.extend({'capture': label, **report} for report in paired if report is not None)
+        if not complete:
+            status.rendered.append({'capture': label, 'report': 'Completion evidence', 'pages': []})
     need(not status.verified or (status.restore and status.restore['replacement_observed']),
          'Restoration verification lacks an observed restoration')
 
@@ -199,7 +206,8 @@ def _inspect(status, backend):
         # Include the original displayed target and app generation. Durable
         # attempt files also stop duplicates whose events arrive during a rerun.
         ledger = [(p.name, sha256(p.read_bytes()).hexdigest())
-                  for p in sorted((_root()/target).glob('*.json'))]
+                  for p in sorted((_root()/target).glob('*.json'))
+                  if p.name.startswith(('forward-', 'restore-'))]
         verifications = sorted(p.name for p in (_root()/target).glob('verification-*'))
         status.revision = sha256(repr((target, status.action, epoch, ledger, verifications)).encode()).hexdigest()
     return _root()/target
@@ -237,7 +245,8 @@ def _safe_blocker(exc):
             r'Local service preflight command failed|Historical options screen rejected|'
             r'Passing retained preflight required|Historical baseline differs|Baseline must remain stopped|'
             r'Expected an existing empty signing option|Unexpected (rewrite rule destination|time format)|'
-            r'Heading does not use expected|Earlier (restoration|interruption) evidence is incomplete|'
+            r'Invalid representative heading data|Ambiguous representative heading source|Heading does not use expected|'
+            r'Earlier (restoration|interruption) evidence is incomplete|'
             r'An earlier app rehearsal is unresolved|An intervening Title|'
             r'Declared rendered effect failed|Restoration verification (failed|incomplete)|'
             r'Title state unresolved|Forward save not confirmed|Restoration not confirmed|Raw Title restored|'

@@ -65,6 +65,7 @@ def preflight_command(*, sanitize=False):
 def check_preflight():
     verify_historical_config()
     data = preflight_command()
+    check_heading_binding(data.pop('elementor_data', None))
     sys.path.insert(0, str(OLD))
     try:
         from screen import inspect as historical_inspect, loads
@@ -81,25 +82,33 @@ def check_preflight():
         for key, value in routes.items()), 'Unexpected rewrite rule destination')
     screened = screen_options(options, historical_inspect, parse, loads)
     need(options.get(SIGNING_OPTION) == '', 'Expected an existing empty signing option')
+    return {**data, 'options_screening': screened, 'signing_option_empty': True,
+            'post_title_binding_verified': True, 'observed_utc': utc_now()}
+
+
+def check_heading_binding(raw):
     try:
-        document = json.loads(data.pop('elementor_data'))
-    except ValueError:
+        document = json.loads(raw)
+    except (TypeError, ValueError, RecursionError):
         raise ValueError('Invalid representative heading data') from None
     selected = []
-
-    def walk(nodes):
+    groups = [document]
+    while groups:
+        nodes = groups.pop()
+        need(isinstance(nodes, list) and all(isinstance(node, dict) for node in nodes),
+             'Invalid representative heading data')
         for node in nodes:
             if node.get('id') == '022c973':
                 selected.append(node)
-            walk(node.get('elements', []))
-
-    walk(document)
+            if 'elements' in node:
+                groups.append(node['elements'])
     need(len(selected) == 1, 'Ambiguous representative heading source')
-    binding = selected[0]['settings'].get('__dynamic__', {}).get('title', '')
-    need('name="post-title"' in binding and 'settings="%7B%7D"' in binding,
+    settings = selected[0].get('settings')
+    dynamic = settings.get('__dynamic__', {}) if isinstance(settings, dict) else None
+    need(isinstance(dynamic, dict), 'Invalid representative heading data')
+    binding = dynamic.get('title')
+    need(isinstance(binding, str) and 'name="post-title"' in binding and 'settings="%7B%7D"' in binding,
          'Heading does not use expected Post Title binding')
-    return {**data, 'options_screening': screened, 'signing_option_empty': True,
-            'post_title_binding_verified': True, 'observed_utc': utc_now()}
 
 
 def preflight():

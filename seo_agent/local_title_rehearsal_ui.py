@@ -63,6 +63,8 @@ def render(sid):
         st.caption('No rendered comparison recorded.')
     for report in status.rendered:
         with st.expander(report['capture'] + ' · ' + report['report']):
+            if not report['pages']:
+                st.caption('Incomplete rendered evidence is retained.')
             for page in report['pages']:
                 st.text(f'{page["page"]} · Literal: {page["literal"].replace("_", " ")} · '
                         f'Raw checks: {page["raw_checks"]}/{page["declared_raw_checks"]} matched')
