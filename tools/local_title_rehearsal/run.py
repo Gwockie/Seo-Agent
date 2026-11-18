@@ -12,14 +12,15 @@ from tools.local_title_rehearsal.runtime import (
     inspect_runtime, need, verify_historical_config,
 )
 from seo_agent.coordination import BusyError, run_lock
-from seo_agent.local_title_rehearsal import DestinationMismatch, recover, require_observed_replacement, transition
+from seo_agent.local_title_rehearsal import DestinationMismatch, forward_binding, recover, require_observed_replacement, transition
 from seo_agent.post_title_effects import TitleEffect, verify_title_effects
 from seo_agent import publication_verification as pv
 from seo_agent.page_tracking import extract
 from seo_agent.storage import new_id, utc_now
 from seo_agent.protection import require_protected
 from bs4 import BeautifulSoup
-from tools.local_title_rehearsal.scope import PATHS, CURRENT, PROPOSED, HOME, validate_scope, save_forward
+from tools.local_title_rehearsal.proposal_binding import digest, validate_binding
+from tools.local_title_rehearsal.scope import PATHS, CURRENT, PROPOSED, HOME, expected_scope, validate_scope, save_forward
 from tools.local_title_rehearsal.screening import SIGNING_OPTION, SIGNING_REJECTION, ScreeningRejected, screen_options
 
 
@@ -103,11 +104,14 @@ def check_heading_binding(raw):
             if 'elements' in node:
                 groups.append(node['elements'])
     need(len(selected) == 1, 'Ambiguous representative heading source')
-    settings = selected[0].get('settings')
+    heading = selected[0]
+    settings = heading.get('settings')
     dynamic = settings.get('__dynamic__', {}) if isinstance(settings, dict) else None
     need(isinstance(dynamic, dict), 'Invalid representative heading data')
     binding = dynamic.get('title')
-    need(isinstance(binding, str) and 'name="post-title"' in binding and 'settings="%7B%7D"' in binding,
+    need(heading.get('elType') == 'widget' and heading.get('widgetType') == 'heading' and
+         settings.get('header_size') == 'h1' and isinstance(binding, str) and re.fullmatch(
+             r'\[elementor-tag id="[a-f0-9]{7}" name="post-title" settings="%7[Bb]%7[Dd]"\]', binding),
          'Heading does not use expected Post Title binding')
 
 
@@ -153,6 +157,36 @@ def baseline_document_titles():
 
 def load_scope():
     return validate_scope(json.loads((PRIVATE/'scope.json').read_text()), document_titles=baseline_document_titles())
+
+
+def proposal_scope(replacement):
+    return expected_scope(baseline_document_titles(), replacement=replacement)
+
+
+def baseline_capture_digest():
+    return sha256((PRIVATE/'before-captures.json').read_bytes()).hexdigest()
+
+
+def bound_scope(binding):
+    validate_binding(binding)
+    scope = proposal_scope(binding['replacement'])
+    need(binding['scope_sha256'] == digest(scope) and binding['baseline_captures_sha256'] == baseline_capture_digest(),
+         'The rehearsal changed: retained verification scope or baseline evidence differs')
+    return scope
+
+
+def check_literal_replacement(binding):
+    """Reject transitions that the retained literal evidence cannot verify in both directions."""
+    for index, page in enumerate(bound_scope(binding)['pages']):
+        before = (PRIVATE/f'before-{index}-sanitized.html').read_bytes()
+        replacement = binding['replacement']
+        after = before.replace(CURRENT.encode('utf-8'), replacement.encode('utf-8'))
+        effects = [TitleEffect(**rule) for rule in page['title_effects']]
+        try:
+            verify_title_effects(before, after, current=CURRENT, proposed=replacement, effects=effects)
+            verify_title_effects(after, before, current=replacement, proposed=CURRENT, effects=effects)
+        except ValueError:
+            raise ValueError('Unsupported local Title text for the retained literal verification.') from None
 
 
 class Backend:
@@ -268,8 +302,8 @@ def capture_proposed(journal):
         (directory/'capture-complete').touch(exist_ok=False)
 
 
-def compare(before_label, after_label, *, current, proposed, journal, reverse=False, verification=None):
-    declaration = load_scope()
+def compare(before_label, after_label, *, current, proposed, journal, reverse=False, verification=None, binding=None):
+    declaration = bound_scope(binding) if binding is not None else load_scope()
 
     def capture_dir(label):
         if label == 'before':
@@ -318,7 +352,8 @@ def compare(before_label, after_label, *, current, proposed, journal, reverse=Fa
             checked = pv._compare(effect, pv._observe(*sources[0], effect), pv._observe(*sources[1], effect), None)
             effects.append(checked)
         result.append({'url': page['url'], 'literal_title_effects': literal, 'publication_effects': effects})
-    record(before_label+'-to-'+after_label+'-verification', {'pages': result}, directory=verification or journal)
+    record(before_label+'-to-'+after_label+'-verification', {'pages': result, **binding_reference(binding)},
+           directory=verification or journal)
     need(all(page['literal_title_effects']['status'] == 'matches_expectation' and all(
         effect['status'] == 'matches_expectation' for effect in page['publication_effects']
     ) for page in result), 'Declared rendered effect failed; inspect retained verification')
@@ -338,7 +373,11 @@ def retained_baseline():
     return baseline
 
 
-def verify_restoration(backend, journal, baseline):
+def binding_reference(binding):
+    return {'proposal_binding_sha256': digest(binding)} if binding is not None else {}
+
+
+def verify_restoration(backend, journal, baseline, *, binding=None):
     raw_title_exact = backend.read() == baseline['title']
     exact = []
     for index, path in enumerate(PATHS):
@@ -351,13 +390,13 @@ def verify_restoration(backend, journal, baseline):
     record('restoration-verified', {'raw_title_exact': raw_title_exact, 'pages': exact,
                                     'baseline_volume_manifests_unchanged': source_unchanged,
                                     'baseline_containers_unchanged': baseline_unchanged,
-                                    'runtime': inspect_retained_runtime()}, directory=journal)
+                                    'runtime': inspect_retained_runtime(), **binding_reference(binding)}, directory=journal)
     need(raw_title_exact and source_unchanged and baseline_unchanged and
          all(page['exact_restoration'] for page in exact), 'Restoration verification failed; inspect retained evidence')
 
 
-def verify_rendered_restoration(backend, journal, baseline):
-    require_observed_replacement(backend, journal, 'restore', expected=PROPOSED, replacement=CURRENT)
+def verify_rendered_restoration(backend, journal, baseline, *, replacement=PROPOSED, binding=None):
+    require_observed_replacement(backend, journal, 'restore', expected=replacement, replacement=CURRENT)
     need(backend.read() == CURRENT, 'An intervening Title prevents restoration verification')
     need(proposed_captures(journal) is not None,
          'Restoration verification incomplete; the proposed-state capture is unavailable')
@@ -366,15 +405,21 @@ def verify_rendered_restoration(backend, journal, baseline):
     verification = journal/f'verification-{new_id()}'
     verification.mkdir()
     capture('restored', directory=verification)
-    compare('before', 'after', current=CURRENT, proposed=PROPOSED, journal=journal, verification=verification)
-    compare('after', 'restored', current=PROPOSED, proposed=CURRENT, journal=journal,
-            reverse=True, verification=verification)
-    verify_restoration(backend, verification, baseline)
+    compare('before', 'after', current=CURRENT, proposed=replacement, journal=journal,
+            verification=verification, binding=binding)
+    compare('after', 'restored', current=replacement, proposed=CURRENT, journal=journal,
+            reverse=True, verification=verification, binding=binding)
+    verify_restoration(backend, verification, baseline, binding=binding)
     return verification.name
 
 
-def run_phase(args, backend, journal):
+def run_phase(args, backend, journal, *, binding=None):
     phase = args[0]
+    if phase in ('recover', 'restore', 'verify'):
+        binding = forward_binding(journal)
+    if binding is not None:
+        validate_binding(binding)
+    replacement = binding['replacement'] if binding is not None else PROPOSED
     if phase == 'preflight':
         preflight()
     elif phase == 'sanitize':
@@ -386,38 +431,42 @@ def run_phase(args, backend, journal):
         capture('before')
     elif phase == 'recover':
         name = args[1]
-        expected, replacement = (CURRENT, PROPOSED) if name == 'forward' else (PROPOSED, CURRENT)
-        result = recover(backend, journal, name, expected=expected, replacement=replacement)
+        expected, target = (CURRENT, replacement) if name == 'forward' else (replacement, CURRENT)
+        result = recover(backend, journal, name, expected=expected, replacement=target)
         print(json.dumps({k: result[k] for k in ('record', 'observation', 'reason')}))
         need(result['actual'] is not None,
              'Title state unresolved; inspect the journal and verify the original app generation has stopped')
     else:
         baseline = retained_baseline()
         if phase == 'forward':
-            result = save_forward(backend, journal, load_scope(), document_titles=baseline_document_titles())
+            declaration = bound_scope(binding) if binding is not None else load_scope()
+            result = save_forward(backend, journal, declaration, document_titles=baseline_document_titles(), binding=binding)
             need(result['outcome'] == 'applied', 'Forward save not confirmed; recover without retrying')
             capture_proposed(journal)
-            compare('before', 'after', current=CURRENT, proposed=PROPOSED, journal=journal)
+            compare('before', 'after', current=CURRENT, proposed=replacement, journal=journal, binding=binding)
         elif phase == 'restore':
-            require_observed_replacement(backend, journal, 'forward', expected=CURRENT, replacement=PROPOSED)
-            need(backend.read() == PROPOSED, 'An intervening Title prevents restoration')
-            load_scope()
+            require_observed_replacement(backend, journal, 'forward', expected=CURRENT, replacement=replacement)
+            need(backend.read() == replacement, 'An intervening Title prevents restoration')
+            if binding is not None:
+                bound_scope(binding)
+            else:
+                load_scope()
             forward_capture_error = None
             try:
                 capture_proposed(journal)
             except (OSError, ValueError, RuntimeError) as exc:
                 forward_capture_error = type(exc).__name__
-            result = transition(backend, journal, 'restore', expected=PROPOSED, replacement=CURRENT)
+            result = transition(backend, journal, 'restore', expected=replacement, replacement=CURRENT)
             need(result['outcome'] == 'applied', 'Restoration not confirmed; recover without retrying')
             capture('restored', directory=journal)
             if forward_capture_error:
                 record('after-capture-unavailable', {'error_type': forward_capture_error}, directory=journal)
                 raise ValueError('Raw Title restored and captured; rendered verification incomplete because the proposed-state capture is unavailable')
             if not (journal/'before-to-after-verification.json').exists():
-                compare('before', 'after', current=CURRENT, proposed=PROPOSED, journal=journal)
-            compare('after', 'restored', current=PROPOSED, proposed=CURRENT, reverse=True, journal=journal)
+                compare('before', 'after', current=CURRENT, proposed=replacement, journal=journal, binding=binding)
+            compare('after', 'restored', current=replacement, proposed=CURRENT, reverse=True, journal=journal, binding=binding)
         elif phase == 'verify':
-            verification = verify_rendered_restoration(backend, journal, baseline)
+            verification = verify_rendered_restoration(backend, journal, baseline, replacement=replacement, binding=binding)
             print(json.dumps({'verification': verification}))
     print(json.dumps({'phase': phase, 'status': 'completed'}))
 

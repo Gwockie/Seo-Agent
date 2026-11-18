@@ -668,13 +668,9 @@ def main():
     elif view == "Hosting & CMS":
         from seo_agent.discovery_ui import render
         render(store, sid, demo=DEMO)
-        if (DEMO and config.name == "Demo psychology A" and
-                config.url == config.gsc_property == "https://psychology-a.example/" and
-                st.get_option("server.address") == "127.0.0.1" and
-                os.environ.get("SEO_LOCAL_TITLE_REHEARSAL") == "1" and
-                all(site["id"] == sid or store.site(site["id"]).url != config.url for site in sites)):
-            from seo_agent.local_title_rehearsal_ui import render as render_rehearsal
-            render_rehearsal(sid)
+        from seo_agent import local_title_rehearsal_ui as local_rehearsal
+        if local_rehearsal.enabled() and local_rehearsal.proposal_binding.mapped_site(store, sid):
+            local_rehearsal.render(store, sid)
     elif view == "Publication verification":
         from seo_agent.publication_verification_ui import render
         render(store, sid)
