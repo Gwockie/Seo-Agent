@@ -18,6 +18,7 @@ from tools.local_title_rehearsal import app_control as control, proposal_binding
 from tools.local_title_rehearsal.scope import CURRENT, HOME, PATHS, PROPOSED, expected_scope
 
 SAVED_TITLE = 'Synthetic Proposal Rehearsal Review'
+READ_ONLY_PROBE = control._probe
 
 
 class RehearsalUITests(unittest.TestCase):
@@ -25,6 +26,7 @@ class RehearsalUITests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.cleanup_fixture, temporary)
         self.root = Path(temporary.name)
+        (self.root/control.ACTIVE_JOURNALS).mkdir()
         self.backend = Backend()
         self.backend.title = CURRENT
         self.runtime = {role: {'id': role + '-fixture'} for role in ('app', 'db')}
@@ -45,17 +47,20 @@ class RehearsalUITests(unittest.TestCase):
         self.source = self.save_proposal()
         self.selection = (self.aid, self.source['action_id'], 1)
         self.capture('before', directory=self.root)
-        self.record(self.root/'clone.json', {'source_manifest': 'fixture'})
+        clone_record = self.root/run.CLONE_RECORD
+        clone_record.parent.mkdir(parents=True)
+        self.record(clone_record, {'source_manifest': 'fixture'})
         self.use(patch.dict('os.environ', {'SEO_DEMO': '1', 'SEO_WORKSPACE': str(self.workspace),
                                           'SEO_LOCAL_TITLE_REHEARSAL': '1'}))
         self.use(patch.multiple(run, RUNTIME_PRIVATE=self.root, PRIVATE=self.root,
-                                require_protected=lambda _: None, Backend=lambda: self.backend,
+                                Backend=lambda: self.backend,
                                 retained_baseline=lambda: {'title': CURRENT, 'baseline': 'fixture'},
                                 load_scope=lambda: self.scope, capture=self.capture,
                                 clone=lambda *_, **__: 'fixture', inspect_baseline=lambda: 'fixture',
                                 inspect_retained_runtime=lambda: self.runtime))
-        self.use(patch.multiple(control, require_protected=lambda _: None,
-                                _prior_rehearsals_settled=lambda *_: None, _probe=self.probe))
+        self.use(patch.multiple(control, require_protected=lambda _: None, require_registered=lambda _: None,
+                                check_preflight=lambda: None,
+                                load_registration=lambda _: {'replacement_runtime': self.runtime}, _probe=self.probe))
 
     def use(self, patcher):
         patcher.start()
@@ -156,7 +161,27 @@ class RehearsalUITests(unittest.TestCase):
         with patch.dict('os.environ', {'SEO_LOCAL_TITLE_REHEARSAL': '0'}):
             self.assertFalse(any('Apply saved Title' == button.label for button in self.open().button))
         self.assertEqual(self.backend.saves, 0)
+        self.assertEqual(list(control._root().iterdir()), [])
+
+    def test_opening_checks_live_state_without_wordpress_bootstrap(self):
+        self.backend.bound_destination = self.backend.identity
+        with patch.object(control, '_probe', READ_ONLY_PROBE), patch.object(
+            control, 'check_preflight', side_effect=AssertionError('WordPress bootstrap during app inspection'),
+        ) as preflight:
+            app = self.open()
+            self.assertFalse(self.button(app, 'forward').disabled)
+            preflight.assert_not_called()
+        self.assertEqual(self.backend.saves, 0)
+        self.assertEqual(list(control._root().iterdir()), [])
+
+    def test_missing_active_journal_root_blocks_current_and_stale_apply(self):
+        stale = self.status()
+        control._root().rmdir()
+        self.assertIn('missing: app-rehearsals', self.status().blocker)
+        with self.assertRaisesRegex(ValueError, 'missing: app-rehearsals'):
+            self.execute(stale)
         self.assertFalse(control._root().exists())
+        self.assertEqual(self.backend.saves, 0)
 
     def test_exact_buttons_restore_and_verify_with_durable_restart_and_duplicate_rejection(self):
         app = self.open()
@@ -221,7 +246,7 @@ class RehearsalUITests(unittest.TestCase):
                 self.assertFalse(status.action)
                 with self.assertRaises(ValueError):
                     self.execute(stale)
-        self.assertFalse(control._root().exists())
+        self.assertEqual(list(control._root().iterdir()), [])
         self.assertEqual(self.backend.saves, 0)
 
     def test_recovery_requires_fencing_and_never_dispatches_a_save(self):
@@ -285,7 +310,7 @@ class RehearsalUITests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'changed or is blocked'):
             self.execute(stale)
         self.assertIn('explicit Post Title mapping', self.status().proposal_blocker)
-        self.assertFalse(control._root().exists())
+        self.assertEqual(list(control._root().iterdir()), [])
         self.assertEqual(self.backend.saves, 0)
 
     def test_unsupported_source_and_replacement_are_explained_without_a_save(self):
@@ -307,7 +332,7 @@ class RehearsalUITests(unittest.TestCase):
                 status = control.inspect(store=self.store, sid=self.sid, selection=(self.aid, value['action_id'], 1))
                 self.assertIn(reason, status.proposal_blocker)
                 self.assertFalse(status.action)
-        self.assertFalse(control._root().exists())
+        self.assertEqual(list(control._root().iterdir()), [])
         self.assertEqual(self.backend.saves, 0)
 
     def test_other_proposal_cannot_bypass_or_take_over_pending_run(self):
@@ -358,11 +383,10 @@ class RehearsalUITests(unittest.TestCase):
         for document in ({}, [{'elements': [False]}],
                          [{'id': '022c973', 'settings': {'__dynamic__': []}}]):
             data = {'elementor_data': json.dumps(document)}
-            with patch.multiple(run, verify_historical_config=lambda: None, preflight_command=lambda: data):
+            with patch.object(run, 'preflight_command', return_value=data):
                 with self.assertRaisesRegex(ValueError, 'Invalid representative heading data'):
                     run.check_preflight()
-        with patch.multiple(run, verify_historical_config=lambda: None,
-                            preflight_command=lambda: {'elementor_data': '{}'}), patch.object(
+        with patch.object(run, 'preflight_command', return_value={'elementor_data': '{}'}), patch.object(
             control, '_probe', side_effect=lambda *_: run.check_preflight()
         ):
             app = self.open()

@@ -1,10 +1,12 @@
 """Fixed disposable Docker route. Never start or write the historical baseline."""
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
 from seo_agent.protection import require_protected
+from tools.local_title_rehearsal.locator import checked_path
 
 REPO = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -14,6 +16,7 @@ OLD = HISTORICAL / '.tmp/meadow-representative-20261021'
 SECRETS = HISTORICAL / 'workspace/private/local-staging/meadow-representative-20261021'
 BASE = 'lseo-meadow-representative-20261021'
 PROJECT = 'lseo-title-rehearsal-20261117'
+STABLE_PROJECT = PROJECT + '-stable'
 IMAGE = 'sha256:1be23f56b98da527b4fbe2f5fb5974f8edb4ba2e3aafaf304fc1b2238956a8e2'
 DBIMAGE = 'percona/percona-server@sha256:fcdd199b34d12c4c5fd3766c7e26e1bf7d8fd5b904c8266a316c864380667231'
 
@@ -28,8 +31,16 @@ def record(name, data):
         json.dump(data, stream, indent=2)
 
 
-def docker(*args, input=None, timeout=90, diagnostic_dir=PRIVATE):
-    process = subprocess.run(['docker', *args], input=input, capture_output=True, timeout=timeout)
+def local_docker(*args, **kwargs):
+    # A caller's Docker context must never redirect this fixed local route.
+    env = {name: value for name, value in os.environ.items() if not name.upper().startswith('DOCKER_')}
+    return subprocess.run(
+        ['docker', '--host=npipe:////./pipe/dockerDesktopLinuxEngine', *args], env=env, **kwargs,
+    )
+
+
+def docker(*args, input=None, timeout=90, diagnostic_dir=None):
+    process = local_docker(*args, input=input, capture_output=True, timeout=timeout)
     if process.returncode:
         if diagnostic_dir is None:
             raise RuntimeError('Docker command failed without usable local evidence')
@@ -43,7 +54,7 @@ def docker(*args, input=None, timeout=90, diagnostic_dir=PRIVATE):
 def inspect_docker(*args):
     """Read-only inspection, including when Docker is stopped or inaccessible."""
     try:
-        result = subprocess.run(['docker', *args], capture_output=True, timeout=15, check=True)
+        result = local_docker(*args, capture_output=True, timeout=15, check=True)
         return json.loads(result.stdout)[0]
     except (OSError, subprocess.SubprocessError, ValueError, IndexError):
         raise RuntimeError('Docker inspection unavailable. Check Docker Desktop and the retained containers.') from None
@@ -59,29 +70,34 @@ def inspect_baseline():
     return result
 
 
-def inspect_runtime(*, private=PRIVATE, writer=HERE/'save-title.php', require_running=True):
+def inspect_runtime(*, private=PRIVATE, writer=HERE/'save-title.php', secrets=SECRETS,
+                    project=PROJECT, require_running=True):
     result = {}
     for role, image, user, volumes, binds in (
         ('db', DBIMAGE, 'mysql', {'/var/lib/mysql': ('database', True), '/run/lseo-db': ('dbsocket', True)},
-         {'/run/secrets/db-root': SECRETS/'db-root', '/run/secrets/db-user': SECRETS/'db-user'}),
+         {'/run/secrets/db-root': secrets/'db-root', '/run/secrets/db-user': secrets/'db-user'}),
         ('app', IMAGE, '33:33', {'/var/www/html': ('site', True), '/run/lseo-db': ('dbsocket', False),
                                 '/run/lseo-http': ('httpsocket', True)},
          {'/var/www/html/wp-config.php': private/'wp-config.php',
           '/var/www/html/wp-content/mu-plugins/000-local-isolation.php': private/'isolation.php',
           '/opt/lseo/save-title.php': writer,
-          '/run/secrets/db-user': SECRETS/'db-user', '/run/secrets/wp-salts': SECRETS/'wp-salts'})):
-        item = inspect_docker('inspect', PROJECT + '-' + role)
+          '/run/secrets/db-user': secrets/'db-user', '/run/secrets/wp-salts': secrets/'wp-salts'})):
+        item = inspect_docker('container', 'inspect', project + '-' + role)
         host, config = item['HostConfig'], item['Config']
         pinned = inspect_docker('image', 'inspect', image)['Id']
         need(item['Image'] == pinned and config['User'] == user, 'Wrong image or runtime user')
         if require_running:
             need(item['State']['Running'] and not item['State']['Paused'],
                  f'Disposable Docker service {role} is stopped or paused')
-        need(host['NetworkMode'] == 'none' and not host['PortBindings'] and not item['NetworkSettings']['Ports'], 'Network exposure')
+        network = item['NetworkSettings']
+        need(host['NetworkMode'] == 'none' and not host['PortBindings'] and not network['Ports'] and
+             set(network['Networks']) <= {'none'}, 'Network exposure')
         need(host['ReadonlyRootfs'] and host['CapDrop'] == ['ALL'] and not host.get('CapAdd') and
              not host['Privileged'] and 'no-new-privileges' in host['SecurityOpt'], 'Unsafe capabilities')
         need(host['PidMode'] != 'host' and host['IpcMode'] != 'host', 'Host namespace')
-        need({m['Destination'] for m in item['Mounts']} == set(volumes) | set(binds), 'Unexpected mounts')
+        need(host['RestartPolicy']['Name'] == 'no', 'Unexpected runtime restart policy')
+        need(len(item['Mounts']) == len(volumes) + len(binds) and
+             {m['Destination'] for m in item['Mounts']} == set(volumes) | set(binds), 'Unexpected mounts')
         for mount in item['Mounts']:
             target = mount['Destination']
             if target in volumes:
@@ -90,27 +106,48 @@ def inspect_runtime(*, private=PRIVATE, writer=HERE/'save-title.php', require_ru
             else:
                 source = mount['Source'].replace('/run/desktop/mnt/host/c/', 'C:/').replace('\\', '/').lower()
                 need(mount['Type'] == 'bind' and not mount['RW'] and source == str(binds[target]).replace('\\', '/').lower(), 'Unexpected bind')
-        result[role] = {'id': item['Id'], 'image': item['Image'], 'network': host['NetworkMode'], 'mounts': item['Mounts']}
+        mounts = item['Mounts']
+        if project == STABLE_PROJECT:
+            mounts = sorted(mounts, key=lambda mount: mount['Destination'])
+        result[role] = {'id': item['Id'], 'image': item['Image'], 'network': host['NetworkMode'], 'mounts': mounts}
     return result
 
 
-def clone(mode, *, diagnostic_dir=PRIVATE):
-    args = ['run', '--rm', '--network', 'none', '--read-only', '--user', '0', '--cap-drop', 'ALL',
+def require_exclusive_volumes(*allowed):
+    """Ensure no other running container is attached to the retained data or sockets."""
+    for role in ('site', 'database', 'dbsocket', 'httpsocket'):
+        name = PROJECT + '_' + role
+        active = docker('ps', '-q', '--no-trunc', '--filter', 'volume=' + name, timeout=15).decode().splitlines()
+        need(set(active) <= set(allowed), 'Another Docker container is using the rehearsal volumes')
+
+
+def verify_disposable_volumes():
+    for role in ('site', 'database', 'dbsocket', 'httpsocket'):
+        name = PROJECT + '_' + role
+        item = inspect_docker('volume', 'inspect', name)
+        need(item['Name'] == name and item['Driver'] == 'local' and item['Scope'] == 'local' and
+             not item['Options'] and item['Labels'] == {'lseo.disposable': PROJECT},
+             'Wrong retained disposable volume')
+
+
+def clone(mode, *, diagnostic_dir=PRIVATE, tool=HERE/'clone-volumes.py'):
+    args = ['run', '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--user', '0', '--cap-drop', 'ALL',
             '--cap-add', 'DAC_OVERRIDE', '--cap-add', 'CHOWN', '--cap-add', 'FOWNER',
             '--security-opt', 'no-new-privileges']
     for role in ('site', 'database'):
         args += ['--mount', f'type=volume,source={BASE}_{role},target=/source/{role},readonly']
         if mode == 'copy':
             args += ['--mount', f'type=volume,source={PROJECT}_{role},target=/target/{role}']
-    args += ['--mount', f'type=bind,source={HERE / "clone-volumes.py"},target=/tool.py,readonly',
+    args += ['--mount', f'type=bind,source={tool},target=/tool.py,readonly',
              '--entrypoint', 'python3', IMAGE, '/tool.py', mode]
     return json.loads(docker(*args, timeout=180, diagnostic_dir=diagnostic_dir))
 
 
 def verify_historical_config():
     # Verify historical runtime files retain their independent review seal.
-    seal = json.loads((OLD / 'independent-review.json').read_text())
-    hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in OLD.iterdir()
+    checked_path(OLD, directory=True)
+    seal = json.loads(checked_path(OLD / 'independent-review.json').read_bytes())
+    hashes = {p.name: hashlib.sha256(checked_path(p).read_bytes()).hexdigest() for p in OLD.iterdir()
               if p.is_file() and p.suffix in ('.py', '.php', '.yml')}
     need(seal['status'] == 'CLEAN' and seal['files'] == hashes, 'Historical reviewed configuration drift')
     return hashes
@@ -139,13 +176,21 @@ def prepare():
            '--mount', f'type=volume,source={PROJECT}_httpsocket,target=/httpsocket',
            '--entrypoint', 'python3', IMAGE, '-c',
            'import os; os.chown("/dbsocket",1001,1001); os.chown("/httpsocket",33,33)')
-    common = ['--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+    create_services(PROJECT, PRIVATE, HERE/'save-title.php', SECRETS)
+    docker('start', PROJECT+'-db', PROJECT+'-app')
+    record('running-isolation', inspect_runtime())
+
+
+def create_services(project, private, writer, secrets):
+    """Create the fixed pair on the existing disposable volumes, without starting it."""
+    common = ['--pull', 'never', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+              '--security-opt', 'no-new-privileges',
               '--pids-limit', '128', '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=128m']
-    docker('run', '-d', '--name', PROJECT+'-db', *common, '--memory', '768m',
+    docker('create', '--name', project+'-db', *common, '--memory', '768m',
            '--env', 'MYSQL_ROOT_PASSWORD_FILE=/run/secrets/db-root', '--env', 'MYSQL_PASSWORD_FILE=/run/secrets/db-user',
            '--env', 'MYSQL_DATABASE=meadow_rep', '--env', 'MYSQL_USER=meadow_rep', '--env', 'PERCONA_TELEMETRY_DISABLE=1',
-           '--mount', f'type=bind,source={SECRETS / "db-root"},target=/run/secrets/db-root,readonly',
-           '--mount', f'type=bind,source={SECRETS / "db-user"},target=/run/secrets/db-user,readonly',
+           '--mount', f'type=bind,source={secrets / "db-root"},target=/run/secrets/db-root,readonly',
+           '--mount', f'type=bind,source={secrets / "db-user"},target=/run/secrets/db-user,readonly',
            '--mount', f'type=volume,source={PROJECT}_database,target=/var/lib/mysql',
            '--mount', f'type=volume,source={PROJECT}_dbsocket,target=/run/lseo-db',
            '--tmpfs', '/var/run/mysqld:rw,noexec,nosuid,nodev,size=1m,uid=1001,gid=1001',
@@ -155,16 +200,15 @@ def prepare():
     mounts = [(PROJECT+'_site', '/var/www/html', False, 'volume'),
               (PROJECT+'_dbsocket', '/run/lseo-db', True, 'volume'),
               (PROJECT+'_httpsocket', '/run/lseo-http', False, 'volume'),
-              (PRIVATE/'wp-config.php', '/var/www/html/wp-config.php', True, 'bind'),
-              (PRIVATE/'isolation.php', '/var/www/html/wp-content/mu-plugins/000-local-isolation.php', True, 'bind'),
-              (HERE/'save-title.php', '/opt/lseo/save-title.php', True, 'bind'),
-              (SECRETS/'db-user', '/run/secrets/db-user', True, 'bind'),
-              (SECRETS/'wp-salts', '/run/secrets/wp-salts', True, 'bind')]
-    args = ['run', '-d', '--name', PROJECT+'-app', *common, '--user', '33:33', '--memory', '1536m']
+              (private/'wp-config.php', '/var/www/html/wp-config.php', True, 'bind'),
+              (private/'isolation.php', '/var/www/html/wp-content/mu-plugins/000-local-isolation.php', True, 'bind'),
+              (writer, '/opt/lseo/save-title.php', True, 'bind'),
+              (secrets/'db-user', '/run/secrets/db-user', True, 'bind'),
+              (secrets/'wp-salts', '/run/secrets/wp-salts', True, 'bind')]
+    args = ['create', '--name', project+'-app', *common, '--user', '33:33', '--memory', '1536m']
     for source, target, readonly, kind in mounts:
         args += ['--mount', f'type={kind},source={source},target={target}' + (',readonly' if readonly else '')]
     docker(*args, IMAGE)
-    record('running-isolation', inspect_runtime())
 
 
 if __name__ == '__main__':

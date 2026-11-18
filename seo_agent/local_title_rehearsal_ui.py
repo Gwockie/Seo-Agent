@@ -37,9 +37,9 @@ def _effects():
 
 def _runtime(status, replacement):
     for role, identity in status.containers.items():
-        st.text(f'Retained {role} container: {identity}')
+        st.text(f'Registered {role} container: {identity}')
     st.caption(f'Isolation: {"verified" if status.isolation else "unavailable"} · '
-               f'Preflight: {"passed" if status.preflight else "unavailable"}')
+               f'Baseline preflight: {"passed" if status.preflight else "unavailable"}')
     if status.blocker:
         st.warning(status.blocker)
     label = 'Observed local baseline' if status.pending_binding else 'Current stored Title'

@@ -126,7 +126,7 @@ exact sanitized baseline bytes; unrelated timestamps/revision rows need not reve
 
 ## Rehearse a saved proposal
 
-Launch the loopback app from the feature checkout with
+Launch the loopback app from any checkout that supports the registered runtime with
 `python -m seo_agent app --demo --local-title-rehearsal`. Select **Demo psychology A**,
 then open the selected audit in **Recommendations & changes**. Use a saved `text`
 proposal on `https://psychology-a.example/psychological-assessments-paoli/` with a
@@ -151,52 +151,87 @@ results historical in the proposal panel. Recovery and restoration still use the
 original journal. **Hosting & CMS** also provides those controls for the active
 run on the source site, including retained runs from before proposal binding.
 
-Both views use the fixed containers and protected evidence in the retained `e369`
-checkout. A stopped or unavailable runtime is reported without starting services.
-When fencing is needed, stop and start only the retained disposable app outside
-the SEO app and reopen the screen.
+Both views use the registered runtime at
+`C:/Personal Projects/seo-agent/local-seo-agent/workspace/private/local-staging/title-rehearsal`.
+This path is independent of the checkout and of the app's proposal workspace.
+The registration binds the replacement app and database IDs, exact read-only
+mounts, pinned writer and support files, and fresh two-page baseline. Missing
+registration or journal directory, changed files, incompatible code and
+mismatched containers block execution. The app reads the registration and uses a read-only database
+transaction to observe the Title, heading binding and isolated database
+settings without loading WordPress. Apply and Restore repeat the live WordPress
+preflight as part of the explicit operation.
+Start the registered database and then the app outside the SEO app. The fixed
+container names end in `-stable-db` and `-stable-app`. Keep both retired
+disposable containers stopped because the replacement uses the same four
+disposable volumes.
 
 App runs are stored in `app-rehearsals/run-000001` and subsequent numbered directories
-inside the protected rehearsal directory. A subsequent run requires an observed
+inside the stable protected directory. A subsequent run requires an observed
 restoration and passing explicit verification of the previous run. An interruption
 that leaves only evidence of the original value, or leaves incomplete rendered
 evidence, requires journal review before another run. Keep all records in place.
 
+## One-time migration of the recovered rehearsal
+
+The explicit operator command
+`python -m tools.local_title_rehearsal.migrate check` checks the known recovered
+inputs, retained journals, independently reviewed sources and stopped Docker
+resources. Run `python -m tools.local_title_rehearsal.migrate migrate` only for
+this recovered installation. It takes the old controller lock, checks all
+canonical prior attempts, and briefly starts the old isolated pair to read the
+original raw Title. It stops that pair before creating or starting the
+replacement. The historical representative project stays stopped throughout.
+
+The command copies private inputs exclusively into the protected stable
+directory, checks byte equality and Windows access, and captures fresh local
+preflight and rendered baseline evidence with the replacement pair. It stops
+the replacement pair and checks the historical baseline's volume manifests
+before activating the runtime. The private `migration-manifest.json` records
+source paths, SHA-256 digests, old and replacement identities and validation
+results. Historical bytes are in `history/old` and
+`history/saved-proposal`. Historical journals retain their original identities
+and cannot become active attempts. The replacement's first new app run starts
+at `app-rehearsals/run-000001` and uses a new operation lock. The old lock stays
+in the recovered source.
+
+An existing destination or a conflicting resource blocks migration. A
+directory without a complete registration stays inactive. Preserve any partial
+copies and replacement resources for inspection. App launch leaves provisioning
+and migration to the explicit operator command.
+
 ## Recover an interrupted attempt
 
-Run from the attached rehearsal checkout with the repository's Python dependencies
-available and the repository root on `PYTHONPATH`. Use the existing protected
-rehearsal directory and retained disposable Docker containers.
+Open the active saved proposal or the source site's **Hosting & CMS** panel in
+the enabled demo app. The controls apply to the registered runtime's journals.
 
-1. Run `python tools/local_title_rehearsal/run.py recover forward` or
-   `python tools/local_title_rehearsal/run.py recover restore` for the specific
-   durable attempt. A live controller holds the local operation lock. If the
-   recorded app generation is still running, the command journals unresolved
-   state and exits unsuccessfully. Preserve the attempt and any result verbatim.
-2. Confirm the exact retained disposable app identity and let any in-flight CLI
+1. Use **Recover interrupted attempt** for the durable attempt. A live
+   controller holds the local operation lock. If the recorded app generation
+   is still running, recovery records unresolved state. Preserve all records.
+2. Confirm the exact registered disposable app identity and let any in-flight CLI
    writer finish. Stop and start only that app container to fence off the old
    writer generation. Keep the disposable database running and the historical
    baseline stopped. The guarded save rejects a delayed request from an old app
    generation before WordPress boots. Recovery validates the same app and database
    containers, isolation, mounts, mounted source and fixed page before accepting a
    read. The journal digest binds each observation to the original attempt.
-3. Run the same recovery command from a fresh process. It appends a separate
+3. Reopen the app and use **Recover interrupted attempt** again. It appends a separate
    observation for the original, proposed, different or unavailable raw value.
    These values are relative to the attempt. For `restore`, the proposed value is
    the historical original Title. Observations describe current state. Keep all
    observations and inspect the named file if a record is incomplete or conflicts
    with the destination. Older journals without writer provenance cannot be
    upgraded by inference.
-4. If forward recovery observes the synthetic Title, `run.py restore` is the
-   separate guarded operation that can restore the exact original Title. An
+4. If forward recovery observes the saved Title, **Restore original Title** is
+   the separate guarded operation. An
    intervening Title or a conflicting settled observation blocks the save. If
    proposed-state capture was interrupted, restoration can capture it in a fresh
    directory while the synthetic Title is still present. If forward recovery
    observes the original Title, leave it in place and retain
    the attempted journal. A different or unavailable Title requires evidence
    review. Never retry by changing an attempt name or moving a journal.
-5. Use `run.py verify` after restoration, including when `recover restore` observes
-   the historical original Title. Verification captures fresh restored pages in a
+5. Use **Verify restoration** after restoration, including when recovery observes
+   the original Title. Verification captures fresh restored pages in a
    separate directory, checks the retained proposed-state captures against the
    declared forward and reverse changes, and checks the raw Title and original
    volume manifests. Missing or failed rendered checks leave verification
