@@ -491,4 +491,4 @@ def run_phase(args, backend, journal, *, binding=None):
 
 
 if __name__ == '__main__':
-    sys.exit('Use the explicitly enabled demo app for saved-proposal rehearsal and recovery.')
+    sys.exit('Use the explicitly enabled loopback app for saved-proposal rehearsal and recovery.')

@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 from hashlib import sha256
 import json
+import os
 import re
 from sqlite3 import OperationalError
 from subprocess import SubprocessError
@@ -39,6 +40,19 @@ class Status:
 
 def _root():
     return run.RUNTIME_PRIVATE/ACTIVE_JOURNALS
+
+
+def opted_in():
+    import streamlit as st
+    return (os.environ.get('SEO_LOCAL_TITLE_REHEARSAL') == '1' and
+            st.get_option('server.address') == '127.0.0.1')
+
+
+def _source_scope(store, sid):
+    need(opted_in(), 'Enable the local Title rehearsal in the loopback app.')
+    source = proposals.source_scope(store, sid)
+    need(source, 'This site has no validated local Title mapping.')
+    return source
 
 
 def _read(path):
@@ -128,6 +142,7 @@ def _journal_status(directory, runtime, status):
         replacement = proposals.validate_binding(status.binding)['replacement']
     status.forward = _attempt(directory, 'forward', replacement)
     status.restore = _attempt(directory, 'restore', replacement)
+    need(status.forward, 'An app rehearsal lacks its forward attempt; preserve the journal for review.')
     need(not status.restore or (status.forward and status.forward['replacement_observed']),
          'Restoration history lacks an observed forward Title')
     reports = ('before-to-after-verification.json', 'after-to-restored-verification.json')
@@ -198,9 +213,8 @@ def _available(status, epoch, next_run):
     return status.journal
 
 
-def _same_proposal(binding, sid, selection):
-    return (binding is not None and (binding['site_id'], binding['audit_id'], binding['action_id']) ==
-            (sid, selection[0], selection[1]))
+def _same_proposal(binding, selection):
+    return binding is not None and (binding['audit_id'], binding['action_id']) == selection[:2]
 
 
 def _selected_proposal(status, store, sid, selection):
@@ -211,7 +225,7 @@ def _selected_proposal(status, store, sid, selection):
             status.proposal_blocker = _safe_blocker(exc)
 
 
-def _inspect(status, backend, *, sid, selection):
+def _inspect(status, backend, *, sid, source, selection):
     runtime = load_registration(run.RUNTIME_PRIVATE)['replacement_runtime']
     status.containers = {role: runtime[role]['id'] for role in ('app', 'db')}
     journals = _journals(_root())
@@ -219,15 +233,19 @@ def _inspect(status, backend, *, sid, selection):
     for directory in journals:
         latest = Status()
         _journal_status(directory, runtime, latest)
-        if selection is not None and _same_proposal(latest.binding, sid, selection):
+        if (selection is not None and proposals.owns_binding(latest.binding, sid, source) and
+                _same_proposal(latest.binding, selection)):
             status.history.append(latest)
         need(directory == journals[-1] or latest.verified, 'An earlier app rehearsal is unresolved')
-    owns_run = latest.binding is None or latest.binding['site_id'] == sid
-    shown = (owns_run if selection is None else _same_proposal(latest.binding, sid, selection))
+    shown = proposals.owns_binding(latest.binding, sid, source) and (
+        selection is None or _same_proposal(latest.binding, selection))
     if shown:
         status.journal, status.binding = latest.journal, latest.binding
         status.forward, status.restore = latest.forward, latest.restore
         status.verified, status.rendered = latest.verified, latest.rendered
+    if latest.journal and not latest.verified and not shown:
+        status.blocker = 'Another rehearsal needs reconciliation before a new run. Open Hosting & CMS for its source site.'
+        return None
     if selection is not None and status.proposal is None and not shown:
         return None
     epoch = _probe(backend, status)
@@ -253,9 +271,6 @@ def _inspect(status, backend, *, sid, selection):
                 status.proposal_blocker = _safe_blocker(exc)
             else:
                 status.pending_binding = binding
-    elif latest.journal and not latest.verified and not shown:
-        status.action = ()
-        status.blocker = 'Another rehearsal needs reconciliation before a new run. Open Hosting & CMS for its source site.'
     if status.action:
         # Include the original displayed target and app generation. Durable
         # attempt files also stop duplicates whose events arrive during a rerun.
@@ -270,11 +285,11 @@ def _inspect(status, backend, *, sid, selection):
 def inspect(*, store, sid, selection=None):
     status = Status()
     try:
-        need(proposals.mapped_site(store, sid), 'This site has no validated local Title mapping.')
+        source = _source_scope(store, sid)
         _selected_proposal(status, store, sid, selection)
         require_registered(run.RUNTIME_PRIVATE)
         with run_lock(run.RUNTIME_PRIVATE/OPERATION_LOCK, create=False):
-            _inspect(status, run.Backend(), sid=sid, selection=selection)
+            _inspect(status, run.Backend(), sid=sid, source=source, selection=selection)
     except BusyError:
         status.blocker = 'Another local title controller is active.'
     except (ProtectionError, RuntimeRegistrationError) as exc:
@@ -306,10 +321,12 @@ def _safe_blocker(exc):
             r'Expected an existing empty signing option|Unexpected (rewrite rule destination|time format)|'
             r'Invalid representative heading data|Ambiguous representative heading source|Heading does not use expected|'
             r'Earlier (restoration|interruption) evidence is incomplete|'
-            r'An earlier app rehearsal is unresolved|An intervening Title|'
+            r'An earlier app rehearsal is unresolved|An app rehearsal lacks its forward attempt|An intervening Title|'
             r'Declared rendered effect failed|Restoration verification (failed|incomplete)|'
             r'Title state unresolved|Forward save not confirmed|Restoration not confirmed|Raw Title restored|'
             r'Local WordPress title command returned|The rehearsal changed|'
+            r'Enable the local Title rehearsal|This proposal is outside the private local Title binding|'
+            r'The selected site or audit profile differs|'
             r'This (site has no validated local Title mapping|proposal requires the explicit Post Title mapping)|'
             r'Select the current saved proposal revision|Action/revision does not belong to this site|'
             r'The saved proposal baseline differs|Unsupported local Title text)', message)):
@@ -320,20 +337,20 @@ def _safe_blocker(exc):
 def execute(action, revision, *, store, sid, selection=None):
     """Recalculate the action under the shared lock before calling the CLI phase."""
     try:
-        need(proposals.mapped_site(store, sid), 'This site has no validated local Title mapping.')
+        source = _source_scope(store, sid)
         require_registered(run.RUNTIME_PRIVATE)
         with run_lock(run.RUNTIME_PRIVATE/OPERATION_LOCK, create=False):
+            store.require_private_write()
             status = Status()
             backend = run.Backend()
             _selected_proposal(status, store, sid, selection)
-            journal = _inspect(status, backend, sid=sid, selection=selection)
+            journal = _inspect(status, backend, sid=sid, source=source, selection=selection)
             need(status.action and (action, revision) == (status.action, status.revision),
                  'The rehearsal changed or is blocked. Review the current state before acting.')
             if action in (('forward',), ('restore',)):
                 check_preflight()
             if action == ('forward',):
                 # Serialize the final source check and dispatch with saved revisions.
-                store.require_private_write()
                 with store.db() as db:
                     db.execute('BEGIN IMMEDIATE')
                     fresh = Status()

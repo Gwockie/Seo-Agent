@@ -1,6 +1,4 @@
 """Proposal and Hosting & CMS controls for the opt-in disposable rehearsal."""
-import os
-
 import streamlit as st
 
 from tools.local_title_rehearsal import app_control, proposal_binding
@@ -16,9 +14,8 @@ ACTIONS = (
 )
 
 
-def enabled():
-    return (os.environ.get('SEO_DEMO') == '1' and os.environ.get('SEO_LOCAL_TITLE_REHEARSAL') == '1' and
-            st.get_option('server.address') == '127.0.0.1')
+def enabled(store, sid):
+    return app_control.opted_in() and proposal_binding.source_scope(store, sid) is not None
 
 
 def _title(value, replacement):
@@ -34,6 +31,7 @@ def _effects():
         st.caption('The four labels are header item 771 and footer item 801 in their main and dropdown menus. '
                    'Raw publication checks bind visible navigation destinations. Canonical, robots metadata and '
                    'X-Robots-Tag must match the baseline on both pages.')
+        st.caption('The Docker copy uses its own historical configuration. These checks cover the two declared local pages.')
 
 def _runtime(status, replacement):
     for role, identity in status.containers.items():
@@ -47,7 +45,8 @@ def _runtime(status, replacement):
 
 
 def _binding(binding):
-    st.text(f"Source site: {binding['site_id']}\nAudit: {binding['audit_id']}\n"
+    st.text(f"Source page: {binding['mapping']['source_url']}\n"
+            f"Source site: {binding['site_id']}\nAudit: {binding['audit_id']}\n"
             f"Proposal: {binding['action_id']} · saved revision {binding['revision']}\n"
             f"Proposal SHA-256: {binding['proposal_sha256']}\n"
             f"Saved baseline: {binding['baseline']}\nProposed Title: {binding['replacement']}")
@@ -121,7 +120,9 @@ def render(store, sid):
 
 
 def render_proposal(store, sid, record):
-    if not enabled():
+    if not enabled(store, sid):
+        return
+    if sid == proposal_binding.PRIVATE_SITE and record['action_id'] != proposal_binding.PRIVATE_ACTION:
         return
     selection = (record['audit_id'], record['action_id'], record['revision'])
     with st.expander('Rehearse this proposal on local staging'):
