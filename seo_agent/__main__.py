@@ -23,7 +23,7 @@ def main():
     app = sub.add_parser('app', help='Launch the local loopback interface')
     app.add_argument('--demo', action='store_true')
     app.add_argument('--local-title-rehearsal', action='store_true',
-                     help='Enable the fixed disposable WordPress rehearsal in demo Hosting & CMS')
+                     help='Enable the fixed disposable WordPress rehearsal for an eligible saved proposal')
     app.add_argument('--port', type=int, default=8501)
     auth = sub.add_parser('auth')
     auth.add_argument('--connection', help='Exact connection ID to reconnect; omitted creates an independent account')
@@ -123,8 +123,6 @@ def main():
     if args.command == 'app':
         if not 1024 <= args.port <= 65535:
             p.error('Use an unprivileged port')
-        if args.local_title_rehearsal and not args.demo:
-            p.error('The local title rehearsal requires --demo')
         workspace = ROOT / 'workspace' / 'demo' if args.demo else args.workspace
         env = {**os.environ, 'SEO_WORKSPACE': str(workspace.resolve()), 'SEO_DEMO': '1' if args.demo else '0'}
         env['SEO_LOCAL_TITLE_REHEARSAL'] = '1' if args.local_title_rehearsal else '0'

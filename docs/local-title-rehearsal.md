@@ -1,8 +1,8 @@
 # Disposable local WordPress title rehearsal
 
-This bounded engineering route is separate from the production publishers and
-the real site's proposals, approvals and receipts. It does not install a CMS
-endpoint, modify publisher certificates or authorize production use.
+This bounded engineering route reads a saved proposal and records isolated
+staging evidence. Production publishers, approvals and implementation receipts
+are outside this route.
 
 ## Initial preflight block on November 17, 2026
 
@@ -126,8 +126,18 @@ exact sanitized baseline bytes; unrelated timestamps/revision rows need not reve
 
 ## Rehearse a saved proposal
 
-Launch the loopback app from any checkout that supports the registered runtime with
-`python -m seo_agent app --demo --local-title-rehearsal`. Select **Demo psychology A**,
+Launch the normal loopback app with `python -m seo_agent app --local-title-rehearsal`
+from the main checkout, or select the registered `workspace/private` explicitly
+with the global `--workspace` option. Select **Meadow & Mind** and its original
+audit in **Recommendations & changes**. The private route requires the protected
+workspace, the exact registered site identity and psychology profile, and the
+current revision of the bound saved action. The saved action must target
+`https://meadowandmindpsychology.com/psychological-assessments-paoli/` as a
+reviewed Post Title text change on page `716` and widget `022c973`. The app
+verifies those details and shows the proposal and isolated destination separately.
+
+For synthetic use, launch `python -m seo_agent app --demo --local-title-rehearsal`
+and select **Demo psychology A**,
 then open the selected audit in **Recommendations & changes**. Use a saved `text`
 proposal on `https://psychology-a.example/psychological-assessments-paoli/` with a
 reviewed Post Title mapping to page `716` and widget `022c973`. The proposal must
@@ -143,9 +153,12 @@ draft. **Apply saved Title** rechecks the stored revision, mapping, writer
 generation, scope and raw Title. Form edits enter this flow after saving a new
 revision. Rehearsal status grants no production approval or SiteGround assurance.
 
-The forward journal freezes the source site, audit, action ID, revision, proposal
-digest, destination, raw Title pair and digests for the two-page scope and baseline
-captures. Raw readback and reconciliation observations, rendered checks and
+The forward journal freezes the source workspace, mode, site profile, audit,
+action ID, revision, proposal digest, destination, raw Title pair and digests
+for the two-page scope and baseline captures. The private and demo views expose
+their own runs. Existing demo journals retain their original mapping and identity.
+An unresolved run holds the shared Docker target for both modes. Raw readback
+and reconciliation observations, rendered checks and
 restoration verification have separate displays. A subsequent edit makes earlier
 results historical in the proposal panel. Recovery and restoration still use the
 original journal. **Hosting & CMS** also provides those controls for the active
@@ -203,7 +216,8 @@ and migration to the explicit operator command.
 ## Recover an interrupted attempt
 
 Open the active saved proposal or the source site's **Hosting & CMS** panel in
-the enabled demo app. The controls apply to the registered runtime's journals.
+the opted-in loopback app. The controls use the originating workspace and the
+frozen binding in the registered runtime's journal.
 
 1. Use **Recover interrupted attempt** for the durable attempt. A live
    controller holds the local operation lock. If the recorded app generation

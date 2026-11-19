@@ -669,7 +669,7 @@ def main():
         from seo_agent.discovery_ui import render
         render(store, sid, demo=DEMO)
         from seo_agent import local_title_rehearsal_ui as local_rehearsal
-        if local_rehearsal.enabled() and local_rehearsal.proposal_binding.mapped_site(store, sid):
+        if local_rehearsal.enabled(store, sid):
             local_rehearsal.render(store, sid)
     elif view == "Publication verification":
         from seo_agent.publication_verification_ui import render

@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
 import tempfile
@@ -9,6 +10,7 @@ from unittest.mock import patch
 from streamlit.testing.v1 import AppTest
 
 from seo_agent import page_tracking, tracking
+from seo_agent.config import SiteConfig
 from seo_agent.coordination import run_lock
 from seo_agent.demo import seed_demo
 from seo_agent.local_title_rehearsal import DestinationMismatch
@@ -52,6 +54,8 @@ class RehearsalUITests(unittest.TestCase):
         self.record(clone_record, {'source_manifest': 'fixture'})
         self.use(patch.dict('os.environ', {'SEO_DEMO': '1', 'SEO_WORKSPACE': str(self.workspace),
                                           'SEO_LOCAL_TITLE_REHEARSAL': '1'}))
+        self.use(patch.object(proposal_binding, 'DEMO_WORKSPACE', self.workspace))
+        self.use(patch.object(proposal_binding, 'PRIVATE_WORKSPACE', self.root/'private'))
         self.use(patch.multiple(run, RUNTIME_PRIVATE=self.root, PRIVATE=self.root,
                                 Backend=lambda: self.backend,
                                 retained_baseline=lambda: {'title': CURRENT, 'baseline': 'fixture'},
@@ -144,6 +148,34 @@ class RehearsalUITests(unittest.TestCase):
         app.sidebar.radio[0].set_value(view).run()
         self.assertFalse(app.exception)
         return app
+
+    @contextmanager
+    def private_session(self, **proposal):
+        demo = self.store, self.sid, self.aid, self.source, self.selection
+        workspace = self.root/'private'
+        with (patch('seo_agent.protection.require_protected',
+                    return_value={'verified': True, 'reason': 'Synthetic protected storage'}) as protection,
+              patch.dict('os.environ', {'SEO_DEMO': '0', 'SEO_WORKSPACE': str(workspace)})):
+            try:
+                self.store = Store(workspace, enforce_protection=True)
+                self.sid = proposal_binding.PRIVATE_SITE
+                self.ids['Meadow fixture'] = self.sid
+                if not self.store.sites():
+                    self.store.save_site(SiteConfig(
+                        name='Meadow fixture', url=proposal_binding.PRIVATE_HOME,
+                        gsc_property=proposal_binding.PRIVATE_HOME, industry='psychology'), self.sid)
+                    page_tracking.save_settings(self.store, self.sid, {'enabled': False})
+                    self.aid = self.store.create_audit(self.sid)
+                    self.source = self.save_proposal(**{
+                        'action_id': proposal_binding.PRIVATE_ACTION,
+                        'url': proposal_binding.PRIVATE_MAPPING['source_url'], **proposal})
+                else:
+                    record, = tracking.actions(self.store, self.sid)
+                    self.aid, self.source = record['audit_id'], record['payload']
+                self.selection = (self.aid, self.source['action_id'], 1)
+                yield protection
+            finally:
+                self.store, self.sid, self.aid, self.source, self.selection = demo
 
     @staticmethod
     def button(app, phase):
@@ -357,6 +389,127 @@ class RehearsalUITests(unittest.TestCase):
         app.sidebar.selectbox[0].select(self.ids['Demo psychology A']).run()
         self.assertFalse(any('Restore original Title' == button.label for button in app.button))
         self.assertEqual(self.backend.saves, 1)
+
+    def test_private_opt_in_exact_workspace_and_source(self):
+        with self.private_session() as protection:
+            ready = self.status()
+            self.assertEqual(ready.action, ('forward',))
+            self.assertEqual(ready.proposal['source']['mode'], 'private')
+            self.assertEqual(ready.proposal['mapping'], proposal_binding.PRIVATE_MAPPING)
+            self.assertEqual(ready.proposal['pending_confirmations'], ['Synthetic pending question'])
+            duplicate = self.store.save_site(self.store.site(self.sid).model_copy(update={'name': 'Duplicate fixture'}))
+            self.assertFalse(control.inspect(store=self.store, sid=duplicate).action)
+            with patch.object(self.store, 'enforce_protection', False):
+                self.assertFalse(self.status().action)
+            with patch.object(self.store, 'initial_protection', {'verified': False}):
+                self.assertFalse(self.status().action)
+            with patch.object(proposal_binding, 'PRIVATE_WORKSPACE', self.root/'different-private'):
+                self.assertFalse(self.status().action)
+            with patch('streamlit.get_option', return_value='0.0.0.0'):
+                with self.assertRaisesRegex(ValueError, 'loopback'):
+                    self.execute(ready)
+            with patch.dict('os.environ', {'SEO_LOCAL_TITLE_REHEARSAL': '0'}):
+                self.assertFalse(any(button.label == 'Apply saved Title'
+                                     for button in self.open('Meadow fixture').button))
+                with self.assertRaisesRegex(ValueError, 'loopback'):
+                    self.execute(ready)
+            app = self.open('Meadow fixture')
+            self.assertFalse(self.button(app, 'forward').disabled)
+            app.run()
+            self.assertFalse(self.button(self.open('Meadow fixture'), 'forward').disabled)
+            protection.side_effect = control.ProtectionError('Protection was lost')
+            with self.assertRaisesRegex(ValueError, 'Protection was lost'):
+                self.execute(ready)
+            self.assertEqual(self.backend.saves, 0)
+            self.assertEqual(list(control._root().iterdir()), [])
+
+    def test_private_profile_action_revision_and_page_widget_must_match(self):
+        with self.private_session():
+            ready = self.status()
+            profile = self.store.site(self.sid)
+            self.store.save_site(profile.model_copy(update={'industry': 'general'}), self.sid)
+            self.assertIn('profile differs', self.status().proposal_blocker)
+            with self.assertRaisesRegex(ValueError, 'changed or is blocked'):
+                self.execute(ready)
+            self.store.save_site(profile, self.sid)
+            self.store.save_site(profile.model_copy(update={'location': 'Changed fixture location'}), self.sid)
+            with self.assertRaisesRegex(ValueError, 'changed or is blocked'):
+                self.execute(ready)
+            self.assertEqual(self.status().action, ('forward',))
+            alternative = self.save_proposal(url=proposal_binding.PRIVATE_MAPPING['source_url'])
+            other = control.inspect(store=self.store, sid=self.sid, selection=(self.aid, alternative['action_id'], 1))
+            self.assertIn('outside the private local Title binding', other.proposal_blocker)
+            for revision, change in enumerate(({'page_id': 717}, {'widget_id': 'aaaaaaa'}), 2):
+                mapping = {**self.source['manual_post_title'], **change}
+                tracking.save_action(self.store, self.sid, self.aid, {**self.source, 'manual_post_title': mapping},
+                                     revision=revision)
+                with self.assertRaisesRegex(ValueError, 'changed or is blocked'):
+                    self.execute(ready)
+                self.selection = (*self.selection[:2], revision)
+                self.assertIn('explicit Post Title mapping', self.status().proposal_blocker)
+            self.assertEqual(self.backend.saves, 0)
+            self.assertEqual(list(control._root().iterdir()), [])
+
+    def test_private_wrong_saved_page_is_ineligible(self):
+        with self.private_session(url=proposal_binding.PRIVATE_HOME + 'other-page/'):
+            self.assertIn('explicit Post Title mapping', self.status().proposal_blocker)
+            self.assertFalse(self.status().action)
+            self.assertEqual(self.backend.saves, 0)
+
+    def test_private_frozen_recovery_and_shared_target_history_exclusion(self):
+        self.execute(self.status())
+        with self.private_session():
+            blocked = self.status()
+            self.assertIn('Another rehearsal needs reconciliation', blocked.blocker)
+            self.assertFalse(blocked.history or blocked.journal or blocked.action or blocked.title)
+        self.execute(self.status())
+        self.execute(self.status())
+        demo_ready = self.status()
+        self.backend.mode = 'crash-after'
+        with self.private_session():
+            available = self.status()
+            self.assertFalse(available.history)
+            before = tracking.actions(self.store, self.sid)
+            with self.assertRaises(Interrupted):
+                self.execute(available)
+            self.assertEqual(self.status().binding['pending_confirmations'], ['Synthetic pending question'])
+            self.assertEqual(tracking.actions(self.store, self.sid), before)
+        hidden = self.status()
+        self.assertIn('Another rehearsal needs reconciliation', hidden.blocker)
+        self.assertFalse(hidden.journal or hidden.binding or hidden.title or hidden.action)
+        self.assertEqual(len(hidden.history), 1)
+        with self.assertRaisesRegex(ValueError, 'changed or is blocked'):
+            self.execute(demo_ready)
+        with self.private_session():
+            self.revise(proposed='A Future Saved Title', manual_post_title=None)
+            self.backend.epoch = 'c' * 64
+            self.backend.mode = 'success'
+            before = tracking.actions(self.store, self.sid, latest=False)
+            frozen = self.status().binding
+            reopened = self.open('Meadow fixture')
+            self.assertTrue(any('Historical revision 1' in item.label for item in reopened.expander))
+            self.button(reopened, 'recover').click().run()
+            self.button(reopened, 'restore').click().run()
+            self.button(reopened, 'verify').click().run()
+            self.assertTrue(reopened.success)
+            self.assertEqual(self.status().binding, frozen)
+            self.assertEqual(self.backend.title, CURRENT)
+            self.assertEqual(tracking.actions(self.store, self.sid, latest=False), before)
+            for table in ('human_approvals', 'publication_batches', 'implementation_receipts'):
+                self.assertEqual(tracking.rows(self.store, table, self.sid), [])
+        self.assertEqual(len(self.status().history), 1)
+        self.assertEqual(self.backend.saves, 4)
+
+    def test_unbound_empty_journal_blocks_both_workspaces(self):
+        ready = self.status()
+        (control._root()/'run-000001').mkdir()
+        self.assertIn('lacks its forward attempt', self.status().blocker)
+        with self.assertRaisesRegex(ValueError, 'lacks its forward attempt'):
+            self.execute(ready)
+        with self.private_session():
+            self.assertIn('lacks its forward attempt', self.status().blocker)
+            self.assertFalse(self.status().action)
+        self.assertEqual(self.backend.saves, 0)
 
     def test_partial_rendered_reports_preserve_guarded_restore_and_verification(self):
         self.execute(self.status())
