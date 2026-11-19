@@ -397,7 +397,7 @@ class RehearsalUITests(unittest.TestCase):
             self.assertEqual(ready.proposal['source']['mode'], 'private')
             self.assertEqual(ready.proposal['mapping'], proposal_binding.PRIVATE_MAPPING)
             self.assertEqual(ready.proposal['pending_confirmations'], ['Synthetic pending question'])
-            duplicate = self.store.save_site(self.store.site(self.sid))
+            duplicate = self.store.save_site(self.store.site(self.sid).model_copy(update={'name': 'Duplicate fixture'}))
             self.assertFalse(control.inspect(store=self.store, sid=duplicate).action)
             with patch.object(self.store, 'enforce_protection', False):
                 self.assertFalse(self.status().action)
