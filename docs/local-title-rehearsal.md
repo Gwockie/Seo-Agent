@@ -174,10 +174,22 @@ mismatched containers block execution. The app reads the registration and uses a
 transaction to observe the Title, heading binding and isolated database
 settings without loading WordPress. Apply and Restore repeat the live WordPress
 preflight as part of the explicit operation.
-Start the registered database and then the app outside the SEO app. The fixed
-container names end in `-stable-db` and `-stable-app`. Keep both retired
-disposable containers stopped because the replacement uses the same four
-disposable volumes.
+In **Hosting & CMS**, select **Start local staging** to start the registered
+database and wait for its socket before starting the registered app. The
+controls check the registered identities, isolation, mounts and volume use
+and share the Title operation lock. A failed start displays the observed
+container states so you can retry from a running database or explicitly stop
+the pair. If the app is running while the database is stopped, stop the app
+before starting the pair.
+
+Select **Stop local staging** to stop the app before the database. Stop
+refuses a live Title writer and holds the writer lock until that app
+generation exits. If Docker cannot confirm the app stopped, the database
+keeps running. A subsequent Stop can finish the fenced shutdown. Opening,
+refreshing or restarting the SEO app only inspects state.
+Both controls preserve the registered containers, volumes and all Title
+journals, including pending outcomes. Keep both retired disposable containers
+stopped because the registered pair uses the same four volumes.
 
 App runs are stored in `app-rehearsals/run-000001` and subsequent numbered directories
 inside the stable protected directory. A subsequent run requires an observed
@@ -223,9 +235,9 @@ frozen binding in the registered runtime's journal.
    controller holds the local operation lock. If the recorded app generation
    is still running, recovery records unresolved state. Preserve all records.
 2. Confirm the exact registered disposable app identity and let any in-flight CLI
-   writer finish. Stop and start only that app container to fence off the old
-   writer generation. Keep the disposable database running and the historical
-   baseline stopped. The guarded save rejects a delayed request from an old app
+   writer finish. Use **Stop local staging**, then **Start local staging** to
+   fence off the old writer generation. Keep the historical baseline stopped.
+   The guarded save rejects a delayed request from an old app
    generation before WordPress boots. Recovery validates the same app and database
    containers, isolation, mounts, mounted source and fixed page before accepting a
    read. The journal digest binds each observation to the original attempt.
