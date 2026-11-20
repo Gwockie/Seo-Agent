@@ -65,6 +65,28 @@ class UITests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual([box for box in app.selectbox if box.label == "Industry"][0].value, "general")
 
+    def test_returning_from_hosting_keeps_the_selected_audit(self):
+        sid = self.ids["Demo psychology A"]
+        older = self.store.audits(sid)[0]["id"]
+        latest = self.store.create_audit(sid)
+
+        with patch("seo_agent.tracking_ui.controls"):
+            app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+            app.sidebar.selectbox[0].select(sid).run()
+            app.sidebar.radio[0].set_value("Recommendations & changes").run()
+
+            def audit_picker():
+                return next(box for box in app.selectbox if box.label == "Audit")
+
+            self.assertEqual(audit_picker().value, latest)
+            audit_picker().select(older).run()
+            self.assertEqual(audit_picker().value, older)
+            app.sidebar.radio[0].set_value("Hosting & CMS").run()
+            self.assertFalse(any(box.label == "Audit" for box in app.selectbox))
+            app.sidebar.radio[0].set_value("Recommendations & changes").run()
+            self.assertFalse(app.exception)
+            self.assertEqual(audit_picker().value, older)
+
     def test_publication_verification_navigation_skips_tracking_and_clears_other_site_state(self):
         with patch("seo_agent.tracking_ui.controls") as controls:
             app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
