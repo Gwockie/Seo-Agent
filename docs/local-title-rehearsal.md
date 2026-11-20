@@ -197,6 +197,24 @@ restoration and passing explicit verification of the previous run. An interrupti
 that leaves only evidence of the original value, or leaves incomplete rendered
 evidence, requires journal review before another run. Keep all records in place.
 
+## Compare saved WordPress captures
+
+In the saved proposal's rehearsal panel, open **Compare saved WordPress captures**.
+Select a run and either of its two local pages. Historical runs retain their saved
+revision number. Side-by-side and individual views display the registered baseline,
+the run's completed staged capture and the capture taken during its Restore action.
+The comparison matches the displayed sanitized HTML to the recorded digests and
+checks the retained raw HTML against its capture manifest and recorded observations
+for the declared locations. The later-phase reports independently record the
+sanitized digests. A missing or unbound phase is unavailable. The legacy demo
+journal predates workspace binding and is excluded from the comparison.
+
+The controls work while the staging pair is stopped. The page view shows captured
+text and basic document structure with site styles, images and links removed.
+Page headings, breadcrumb text and navigation labels are visible where captured.
+The separate document title comes from the capture. Mobile layout, live appearance
+and production compatibility remain outside these checks.
+
 ## One-time migration of the recovered rehearsal
 
 The explicit operator command
