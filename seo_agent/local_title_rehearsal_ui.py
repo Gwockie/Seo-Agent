@@ -1,7 +1,7 @@
 """Proposal and Hosting & CMS controls for the opt-in disposable rehearsal."""
 import streamlit as st
 
-from tools.local_title_rehearsal import app_control, proposal_binding
+from tools.local_title_rehearsal import app_control, lifecycle, proposal_binding
 from tools.local_title_rehearsal.runtime import PROJECT
 from tools.local_title_rehearsal.scope import CURRENT, HOME, PATHS, PROPOSED
 
@@ -106,10 +106,49 @@ def _actions(status, store, sid, *, selection=None):
             st.rerun()
 
 
+def _change_lifecycle(action, pair, store, sid, message_key):
+    if st.session_state.get('selected_site', sid) != sid:
+        return
+    try:
+        lifecycle.execute(action, pair, store=store, sid=sid)
+    except lifecycle.LifecycleError as exc:
+        st.session_state[message_key] = str(exc)
+
+
+def _lifecycle(store, sid):
+    message_key = f'{sid}:local-title-rehearsal:lifecycle-message'
+    if message := st.session_state.pop(message_key, None):
+        st.error(message)
+    try:
+        pair = lifecycle.inspect(store=store, sid=sid)
+    except lifecycle.LifecycleError as exc:
+        st.warning(str(exc))
+        return
+
+    db = 'running' if pair.db.state == 'running' else 'stopped'
+    app = 'running' if pair.app.state == 'running' else 'stopped'
+    st.caption(f'Local database: {db} · Local app: {app}')
+    if pair.db.state != pair.app.state:
+        st.warning('Local staging is partially running. Review the database and app states before continuing.')
+    if 'db' in pair.unready:
+        st.warning('The local database is running but its socket did not respond.')
+    if 'app' in pair.unready:
+        st.warning('The local renderer is running but its socket did not respond. Stop local staging before starting it again.')
+    if pair.shutdown_fenced:
+        st.warning('The local app is fenced for shutdown. Select Stop local staging again to finish stopping the pair.')
+    for action, label, available in (
+        ('start', 'Start local staging', pair.can_start),
+        ('stop', 'Stop local staging', pair.can_stop),
+    ):
+        st.button(label, key=f'{sid}:local-title-rehearsal:{action}', disabled=not available,
+                  on_click=_change_lifecycle, args=(action, pair, store, sid, message_key))
+
+
 def render(store, sid):
     st.subheader('Disposable local WordPress rehearsal')
     st.caption('Select a saved revision in Recommendations & changes to start a rehearsal. Use this view to recover or restore an existing run.')
     st.text(f'{PROJECT} · page 716 · Title · widget 022c973\n{HOME + PATHS[0]}')
+    _lifecycle(store, sid)
     _effects()
     status = app_control.inspect(store=store, sid=sid)
     _runtime(status, status.binding['replacement'] if status.binding else PROPOSED)

@@ -311,7 +311,7 @@ def _safe_blocker(exc):
             r'^(Docker inspection unavailable|Disposable Docker service (app|db) |'
             r'Another local title controller|Wrong image or runtime user$|Network exposure$|'
             r'Unsafe capabilities$|Host namespace$|Unexpected mounts$|Shared or wrong volume$|Unexpected bind$|'
-            r'Unexpected runtime restart policy|Retired rehearsal container identity differs|'
+            r'Unexpected runtime restart policy|Retired rehearsal container identity differs|Wrong retained disposable volume$|'
             r'Another Docker container is using the rehearsal volumes|'
             r'Disposable runtime identity differs|Mounted (source differs|title writer differs)|'
             r'Current runtime differs|Local isolation source differs|Historical reviewed configuration drift|'
