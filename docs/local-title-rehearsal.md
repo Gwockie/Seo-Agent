@@ -201,8 +201,10 @@ evidence, requires journal review before another run. Keep all records in place.
 
 In the saved proposal's rehearsal panel, open **Compare saved WordPress captures**.
 Select a run and either of its two local pages. Historical runs retain their saved
-revision number. Side-by-side and individual views display the registered baseline,
-the run's completed staged capture and the capture taken during its Restore action.
+revision number. **Compare all** shows the registered baseline, the completed staged
+capture and the capture taken during Restore side by side when space allows.
+In a narrow window the recorded values stack. Select **Before**, **Staged** or
+**Restored** to read the full capture at either width.
 The comparison matches the displayed sanitized HTML to the recorded digests and
 checks the retained raw HTML against its capture manifest and recorded observations
 for the declared locations. The later-phase reports independently record the

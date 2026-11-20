@@ -280,7 +280,14 @@ def choose_audit(store, sid):
         st.info("No audit evidence for this site yet.")
         return None
     labels = {a["id"]: f'{a["created"]} — {a["status"]}' for a in audits}
-    aid = st.selectbox("Audit", list(labels), format_func=labels.get, key=sid + ":audit_choice")
+    widget_key = sid + ":audit_choice"
+    selection_key = sid + ":selected_audit"
+    if st.session_state.get(widget_key) not in labels:
+        # Streamlit drops the widget state on views without an audit picker.
+        saved = st.session_state.get(selection_key)
+        st.session_state[widget_key] = saved if saved in labels else next(iter(labels))
+    aid = st.selectbox("Audit", list(labels), format_func=labels.get, key=widget_key)
+    st.session_state[selection_key] = aid
     return store.audit(sid, aid)
 
 

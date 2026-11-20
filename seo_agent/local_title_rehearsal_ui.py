@@ -16,6 +16,20 @@ ACTIONS = (
 )
 
 
+CAPTURE_COMPARISON_STYLE = """
+<style>
+[class*="st-key-rehearsal-capture-layout-"] {
+    container: rehearsal-capture-layout / inline-size;
+}
+@container rehearsal-capture-layout (max-width: 42rem) {
+    [data-testid="stHorizontalBlock"] { flex-direction: column; }
+    [data-testid="stColumn"] { flex: none; width: 100%; }
+    [data-testid="stElementContainer"]:has(> [data-testid="stIFrame"]) { display: none; }
+}
+</style>
+"""
+
+
 def enabled(store, sid):
     return app_control.opted_in() and proposal_binding.source_scope(store, sid) is not None
 
@@ -193,7 +207,7 @@ def _capture_comparison(store, sid, selection):
                       for item in runs}
             run_name = st.selectbox('Rehearsal run', list(reversed(labels)), format_func=labels.get, key=key + 'run')
             page = st.selectbox('Captured local page', PATHS, key=key + 'page')
-            view = st.radio('Capture view', ('Side by side', *capture_review.PHASES), horizontal=True, key=key + 'view')
+            view = st.radio('Capture view', ('Compare all', *capture_review.PHASES), horizontal=True, key=key + 'view')
             result = capture_review.load_comparison(store, sid, selection, run_name, page)
         except capture_review.CaptureUnavailable as exc:
             st.warning(str(exc))
@@ -203,10 +217,15 @@ def _capture_comparison(store, sid, selection):
                    'This view does not verify mobile behavior, the live site or production compatibility.')
         sections = {'Page heading': HEADING, 'Breadcrumb': BREADCRUMB} if page == PATHS[0] else {'Page heading': CONTACT_HEADING}
         sections.update({'Header navigation label': LITERAL_NAVIGATION[0], 'Footer navigation label': LITERAL_NAVIGATION[2]})
-        phases = capture_review.PHASES if view == 'Side by side' else (view,)
-        for phase, column in zip(phases, st.columns(len(phases))):
-            with column:
-                _capture_panel(phase, result[phase], sections)
+        if view in capture_review.PHASES:
+            _capture_panel(view, result[view], sections)
+            return
+        st.caption('Select Before, Staged or Restored for a full-width page capture.')
+        st.html(CAPTURE_COMPARISON_STYLE)
+        with st.container(key=f'rehearsal-capture-layout-{selection[0]}-{selection[1]}'):
+            for phase, column in zip(capture_review.PHASES, st.columns(3)):
+                with column:
+                    _capture_panel(phase, result[phase], sections)
 
 
 def render_proposal(store, sid, record):
