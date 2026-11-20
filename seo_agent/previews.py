@@ -8,6 +8,8 @@ import json
 import re
 from urllib.parse import urljoin
 
+from bs4 import BeautifulSoup, NavigableString, Tag
+
 from .appearance import font_css, validate_appearance
 from .config import SiteConfig, public_url, within_site
 from .storage import historical_date
@@ -235,6 +237,56 @@ def page_document(bundle, page, *, proposed=False, highlights=True):
     mark.removed {{background:#fee2e2;color:#7f1d1d;border-bottom:3px solid #b91c1c}}
     .link-change {{outline:3px solid #a16207;outline-offset:3px}}
     </style></head><body>""" + render(page["tree"]) + "</body></html>"
+
+
+def static_capture_document(source, sections):
+    """Rebuild a captured page from literal text and inert HTML elements."""
+    parsed = BeautifulSoup(source, "html.parser")
+    if not parsed.html or not parsed.head or not parsed.body:
+        raise ValueError("The capture lacks a complete page document.")
+
+    def visible(tag):
+        return ("hidden" not in tag.attrs and str(tag.get("aria-hidden", "")).lower() != "true"
+                and not re.search(r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\b",
+                                  tag.get("style", ""), re.I))
+
+    def render(node, *, plain=False, depth=0):
+        if depth > 120:
+            raise ValueError("The captured page is too deeply nested to display.")
+        if type(node) is NavigableString:
+            return str(node) if plain else html.escape(str(node))
+        if not isinstance(node, Tag) or node.name not in TAGS or not visible(node):
+            return ""
+        tag = {"body": "div", "a": "span"}.get(node.name, node.name)
+        if tag == "img":
+            return ""  # This evidence has no validated retained image bundles.
+        if tag in ("br", "hr"):
+            return "\n" if plain else f"<{tag}>"
+        content = "".join(render(child, plain=plain, depth=depth + 1) for child in node.children)
+        return content if plain else f"<{tag}>{content}</{tag}>"
+
+    titles = parsed.select("head > title", limit=2)
+    # Title content never enters the rendered markup or the outer HTML frame.
+    title = "".join(str(child) for child in titles[0].children
+                    if type(child) is NavigableString) if len(titles) == 1 else ""
+    observations = {}
+    for label, selector in sections.items():
+        matches = parsed.body.select(selector, limit=2)
+        if len(matches) != 1:
+            continue
+        element = matches[0]
+        if all(ancestor.name in TAGS and visible(ancestor)
+               for ancestor in element.parents if ancestor is not parsed.html and ancestor is not parsed):
+            if text := render(element, plain=True).strip():
+                observations[label] = text
+    csp = ("default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; "
+           "connect-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'")
+    document = ('<!doctype html><html><head><meta charset="utf-8">'
+                f'<meta http-equiv="Content-Security-Policy" content="{csp}">'
+                '<style>body{background:#fff;color:#292524;font:16px/1.5 system-ui;margin:16px;'
+                'overflow-wrap:anywhere}nav{border-block:1px solid #d6d3d1}pre{white-space:pre-wrap}'
+                'table{max-width:100%}</style></head><body>' + render(parsed.body) + '</body></html>')
+    return title, observations, document
 
 
 def preview_frame(document):

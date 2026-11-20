@@ -11,7 +11,7 @@ from seo_agent.appearance import DEFAULT, app_css, capture_appearance, load_appe
 from seo_agent.backup import _backup, _restore
 from seo_agent.config import SiteConfig
 from seo_agent.import_export import report_packet
-from seo_agent.previews import difference, load_preview, page_document, preview_frame, save_preview, validate_preview
+from seo_agent.previews import difference, load_preview, page_document, preview_frame, save_preview, static_capture_document, validate_preview
 from seo_agent.review_format import report_html
 from seo_agent.storage import Store
 
@@ -36,6 +36,39 @@ class ReviewTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_static_capture_preserves_literal_text_and_discards_active_content(self):
+        source = """<html><head><title>Café &amp; &lt;local&gt; 🧠</title>
+        <meta http-equiv="refresh" content="0;url=http://localhost:18718/">
+        <base href="https://production.example/"><link rel="stylesheet" href="/styles">
+        <style>@import '/styles';@font-face{src:url('/font')}</style></head>
+        <body><h1 onclick="hiddenHandler()">Actual café &amp; &lt;script&gt; 🧠</h1>
+        <a href="https://production.example/" ping="http://localhost:18718/" target="_top">Navigation label</a>
+        <div style="background:url('/tracker')" data-token="hiddenAttribute">Captured copy</div>
+        <img src="/image" srcset="/other 2x" alt="image attribute">
+        <svg><text>hiddenSVG</text></svg><iframe src="http://localhost:18718/">hiddenFrame</iframe>
+        <script type="application/json">hiddenData</script>
+        <form><input value="hiddenInput"><textarea>hiddenTextarea</textarea><p>hiddenForm</p></form>
+        <div hidden><p id="offscreen">hiddenMarkup</p></div>
+        <span style="display: none!important">hiddenStyle</span>
+        <template><p>hiddenTemplate</p></template><!-- hiddenComment -->
+        </body></html>"""
+        title, observations, document = static_capture_document(source, {
+            "Heading": "h1", "Navigation": "a", "Hidden": "#offscreen",
+        })
+        self.assertEqual(title, "Café & <local> 🧠")
+        self.assertEqual(observations, {"Heading": "Actual café & <script> 🧠", "Navigation": "Navigation label"})
+        frame = BeautifulSoup(preview_frame(document), "html.parser").iframe
+        self.assertEqual(frame["sandbox"], [])
+        self.assertEqual(frame["referrerpolicy"], "no-referrer")
+        inner = BeautifulSoup(frame["srcdoc"], "html.parser")
+        self.assertEqual(inner.h1.text, observations["Heading"])
+        self.assertEqual(inner.span.text, observations["Navigation"])
+        self.assertFalse(inner.select("a,img,link,base,iframe,form,script,svg,[src],[href],[style],[onclick],[data-token]"))
+        self.assertIn("img-src 'none'; font-src 'none'; connect-src 'none'", inner.meta.find_next_sibling("meta")["content"])
+        self.assertNotIn("hidden", frame["srcdoc"])
+        self.assertNotIn("localhost", frame["srcdoc"])
+        self.assertNotIn("production.example", frame["srcdoc"])
 
     def test_report_formatting_keeps_source_markup_and_remote_content_inert(self):
         report = '# Review\n\n**Strong** and `code`\n\n- One\n- Two\n\n| Item | Value |\n| --- | --- |\n| x | y |\n\n<script>bad()</script> ![image](https://other.example/track) [link](javascript:bad())'

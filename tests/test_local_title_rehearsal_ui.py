@@ -2,8 +2,10 @@ import json
 from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
+import stat
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -16,7 +18,7 @@ from seo_agent.demo import seed_demo
 from seo_agent.local_title_rehearsal import DestinationMismatch
 from seo_agent.storage import Store, new_id, utc_now
 from tests.test_local_title_rehearsal import Backend, Interrupted
-from tools.local_title_rehearsal import app_control as control, proposal_binding, run
+from tools.local_title_rehearsal import app_control as control, capture_review, proposal_binding, run
 from tools.local_title_rehearsal.scope import CURRENT, HOME, PATHS, PROPOSED, expected_scope
 
 SAVED_TITLE = 'Synthetic Proposal Rehearsal Review'
@@ -48,7 +50,15 @@ class RehearsalUITests(unittest.TestCase):
         self.aid = self.store.create_audit(self.sid)
         self.source = self.save_proposal()
         self.selection = (self.aid, self.source['action_id'], 1)
-        self.capture('before', directory=self.root)
+        self.baseline = self.root/'baseline'
+        self.baseline.mkdir()
+        self.capture('before', directory=self.baseline)
+        self.record(self.baseline/'scope.json', self.scope)
+        registered = {f'baseline/{path.name}': sha256(path.read_bytes()).hexdigest()
+                      for path in self.baseline.iterdir()}
+        run_file_hashes = {name: sha256(name.encode()).hexdigest() for name in capture_review._MOUNTS}
+        self.registration = {'replacement_runtime': self.runtime, 'active_sha256': {**registered, **run_file_hashes}}
+        self.backend.identity = run.destination_digest(self.runtime, [run_file_hashes[name] for name in capture_review._MOUNTS])
         clone_record = self.root/run.CLONE_RECORD
         clone_record.parent.mkdir(parents=True)
         self.record(clone_record, {'source_manifest': 'fixture'})
@@ -56,7 +66,7 @@ class RehearsalUITests(unittest.TestCase):
                                           'SEO_LOCAL_TITLE_REHEARSAL': '1'}))
         self.use(patch.object(proposal_binding, 'DEMO_WORKSPACE', self.workspace))
         self.use(patch.object(proposal_binding, 'PRIVATE_WORKSPACE', self.root/'private'))
-        self.use(patch.multiple(run, RUNTIME_PRIVATE=self.root, PRIVATE=self.root,
+        self.use(patch.multiple(run, RUNTIME_PRIVATE=self.root, PRIVATE=self.baseline,
                                 Backend=lambda: self.backend,
                                 retained_baseline=lambda: {'title': CURRENT, 'baseline': 'fixture'},
                                 load_scope=lambda: self.scope, capture=self.capture,
@@ -65,6 +75,8 @@ class RehearsalUITests(unittest.TestCase):
         self.use(patch.multiple(control, require_protected=lambda _: None, require_registered=lambda _: None,
                                 check_preflight=lambda: None,
                                 load_registration=lambda _: {'replacement_runtime': self.runtime}, _probe=self.probe))
+        self.use(patch.multiple(capture_review, read_registration=lambda _: self.registration,
+                                require_protected=lambda _: None))
 
     def use(self, patcher):
         patcher.start()
@@ -322,6 +334,7 @@ class RehearsalUITests(unittest.TestCase):
 
     def test_changed_revision_mapping_and_baseline_invalidate_pending_apply(self):
         stale = self.status()
+        original_destination = self.backend.identity
         self.assertEqual(stale.action, ('forward',))
         self.backend.title = 'Unexpected local baseline'
         with self.assertRaisesRegex(ValueError, 'changed or is blocked'):
@@ -330,7 +343,7 @@ class RehearsalUITests(unittest.TestCase):
         self.backend.identity = 'd' * 64
         with self.assertRaisesRegex(ValueError, 'changed or is blocked'):
             self.execute(stale)
-        self.backend.identity = 'b' * 64
+        self.backend.identity = original_destination
         self.revise(proposed='Different saved title')
         with self.assertRaisesRegex(ValueError, 'changed or is blocked'):
             self.execute(stale)
@@ -530,6 +543,222 @@ class RehearsalUITests(unittest.TestCase):
         self.assertTrue(app.success)
         self.assertEqual(forward_report.read_text(encoding='utf-8'), 'null')
         self.assertTrue(partial.exists())
+        self.assertEqual(self.backend.saves, 2)
+
+    def finish_rehearsal(self):
+        for phase in ('forward', 'restore', 'verify'):
+            status = self.status()
+            self.assertEqual(status.action, (phase,))
+            self.execute(status)
+
+    def comparison(self, journal='run-000001', page=PATHS[0], **overrides):
+        args = dict(store=self.store, sid=self.sid, selection=self.selection, run_name=journal, page=page)
+        return capture_review.load_comparison(**{**args, **overrides})
+
+    def test_capture_comparison_selects_exact_run_revision_page_and_phase(self):
+        self.finish_rehearsal()
+        self.revise(proposed='Second saved Title')
+        self.finish_rehearsal()
+        runs = capture_review.available_runs(self.store, self.sid, self.selection)
+        self.assertEqual(runs, [capture_review.SavedRun('run-000001', 1, True),
+                                capture_review.SavedRun('run-000002', 2, False)])
+        for item, title in zip(runs, (SAVED_TITLE, 'Second saved Title')):
+            directory = control._root()/item.name
+            staged, = directory.glob('proposed-capture-*')
+            for index, page in enumerate(PATHS):
+                captures = self.comparison(item.name, page)
+                for phase, label, source in (('Before', 'before', self.baseline), ('Staged', 'after', staged),
+                                             ('Restored', 'restored', directory)):
+                    with self.subTest(item=item, page=page, phase=phase):
+                        captured = captures[phase]
+                        original = (source/f'{label}-{index}-sanitized.html').read_bytes().decode('utf-8')
+                        record = json.loads((source/f'{label}-captures.json').read_bytes())['pages'][index]
+                        self.assertEqual((captured.source, captured.checked), (original, record['checked']))
+                self.assertIn(title, captures['Staged'].source)
+                self.assertNotIn(title, captures['Restored'].source)
+                if index:
+                    for capture in captures.values():
+                        self.assertIn('<title>Contact Us | Fixture</title>', capture.source)
+        self.assertEqual(self.backend.saves, 4)
+
+    def test_missing_tampered_partial_and_mismatched_capture_evidence(self):
+        self.finish_rehearsal()
+        directory = control._root()/'run-000001'
+        staged, = directory.glob('proposed-capture-*')
+        # Leave independently verified restored captures elsewhere in this run.
+        (directory/'restored-0-sanitized.html').unlink()
+        self.assertIn('missing', self.comparison()['Restored'])
+        self.assertIsInstance(self.comparison(page=PATHS[1])['Restored'], capture_review.Capture)
+        raw = staged/'after-0-raw.html'
+        saved = raw.read_bytes()
+        raw.write_bytes(saved+b' altered')
+        self.assertIn('raw capture differs', self.comparison()['Staged'])
+        raw.write_bytes(saved)
+        (staged/'capture-complete').unlink()
+        self.assertIn('single completed staged capture', self.comparison()['Staged'])
+        (staged/'capture-complete').touch()
+        manifest = staged/'after-captures.json'
+        original = json.loads(manifest.read_bytes())
+        swapped = {'pages': list(reversed(original['pages']))}
+        manifest.write_text(json.dumps(swapped), encoding='utf-8')
+        self.assertIn('both declared local pages', self.comparison()['Staged'])
+        original['pages'][0]['checked'] = '2020-01-01T00:00:00+00:00'
+        manifest.write_text(json.dumps(original), encoding='utf-8')
+        self.assertIn('outside this run', self.comparison()['Staged'])
+        report = directory/'before-to-after-verification.json'
+        document = json.loads(report.read_bytes())
+        document['proposal_binding_sha256'] = 'a' * 64
+        report.write_text(json.dumps(document), encoding='utf-8')
+        self.assertIn('different proposal binding', self.comparison()['Staged'])
+
+    def test_capture_phases_require_the_recorded_write_and_expected_location(self):
+        self.finish_rehearsal()
+        directory = control._root()/'run-000001'
+        staged, = directory.glob('proposed-capture-*')
+        for phase, folder, label, attempt in (('Staged', staged, 'after', 'forward'),
+                                              ('Restored', directory, 'restored', 'restore')):
+            manifest = folder/f'{label}-captures.json'
+            original = manifest.read_bytes()
+            data = json.loads(original)
+            intent = json.loads((directory/f'{attempt}-attempt.json').read_bytes())
+            data['pages'][0]['checked'] = intent['observed_utc']
+            manifest.write_text(json.dumps(data), encoding='utf-8')
+            self.assertIn('outside this run', self.comparison()[phase])
+            data['pages'][0]['checked'] = '9999-01-01T00:00:00+00:00'
+            manifest.write_text(json.dumps(data), encoding='utf-8')
+            self.assertIn('outside this run', self.comparison()[phase])
+            manifest.write_bytes(original)
+        (directory/'after-captures.json').write_bytes((staged/'after-captures.json').read_bytes())
+        (staged/'capture-complete').unlink()
+        self.assertIn('marked capture directory', self.comparison()['Staged'])
+        restore_attempt = directory/'restore-attempt.json'
+        (directory/'restore-result.json').unlink()
+        self.record(directory/f'restore-recovery-{new_id()}.json', {
+            'observed_utc': utc_now(), 'attempt_sha256': sha256(restore_attempt.read_bytes()).hexdigest(),
+            'destination': self.backend.identity, 'app_epoch': 'c' * 64,
+            'observation': 'proposed_value_observed', 'actual': CURRENT, 'reason': None,
+        })
+        self.assertIn('confirmed Restore result', self.comparison()['Restored'])
+
+    def test_capture_verification_requires_raw_observations_and_exact_reversal(self):
+        self.finish_rehearsal()
+        directory = control._root()/'run-000001'
+        staged, = directory.glob('proposed-capture-*')
+        forward = directory/'before-to-after-verification.json'
+        original = forward.read_bytes()
+        incomplete = json.loads(original)
+        incomplete['pages'][0]['publication_effects'] = [{'status': 'matches_expectation'}] * 8
+        forward.write_text(json.dumps(incomplete), encoding='utf-8')
+        self.assertIn('verification checks are incomplete', self.comparison()['Staged'])
+        incomplete = json.loads(original)
+        del incomplete['pages'][0]['literal_title_effects']['substitutions']
+        forward.write_text(json.dumps(incomplete), encoding='utf-8')
+        self.assertIn('literal check is incomplete', self.comparison()['Staged'])
+        forward.write_bytes(original)
+        raw = staged/'after-0-raw.html'
+        raw_original = raw.read_bytes()
+        raw_changed = raw_original.replace(b'<title>', b'<title>Unrecorded change ')
+        raw.write_bytes(raw_changed)
+        staged_manifest = staged/'after-captures.json'
+        manifest_original = staged_manifest.read_bytes()
+        manifest = json.loads(manifest_original)
+        manifest['pages'][0]['raw_sha256'] = sha256(raw_changed).hexdigest()
+        staged_manifest.write_text(json.dumps(manifest), encoding='utf-8')
+        self.assertIn('differs from the recorded checks', self.comparison()['Staged'])
+        raw.write_bytes(raw_original)
+        staged_manifest.write_bytes(manifest_original)
+
+        staged_html = staged/'after-0-sanitized.html'
+        staged_original = staged_html.read_bytes()
+        changed = staged_original.replace(SAVED_TITLE.encode(), b'Other saved Title')
+        staged_html.write_bytes(changed)
+        digest = sha256(changed).hexdigest()
+        manifest = json.loads(manifest_original)
+        manifest['pages'][0]['sanitized_sha256'] = digest
+        report = json.loads(original)
+        report['pages'][0]['literal_title_effects']['after_sha256'] = digest
+        staged_manifest.write_text(json.dumps(manifest), encoding='utf-8')
+        forward.write_text(json.dumps(report), encoding='utf-8')
+        self.assertIn('differs from the recorded literal change', self.comparison()['Staged'])
+        staged_html.write_bytes(staged_original)
+        staged_manifest.write_bytes(manifest_original)
+        forward.write_bytes(original)
+
+        sanitized = directory/'restored-0-sanitized.html'
+        changed = sanitized.read_bytes().replace(b'</body>', b'<p>Unrecorded change</p></body>')
+        sanitized.write_bytes(changed)
+        digest = sha256(changed).hexdigest()
+        for name, update in (
+            ('restored-captures.json', lambda page: page.update(sanitized_sha256=digest)),
+            ('after-to-restored-verification.json', lambda page: page['literal_title_effects'].update(after_sha256=digest)),
+        ):
+            path = directory/name
+            value = json.loads(path.read_bytes())
+            update(value['pages'][0])
+            path.write_text(json.dumps(value), encoding='utf-8')
+        self.assertIn('registered baseline digest', self.comparison()['Restored'])
+
+    def test_comparison_rejects_other_sources_and_unsafe_paths(self):
+        self.finish_rehearsal()
+        with self.assertRaisesRegex(capture_review.CaptureUnavailable, 'recorded run'):
+            self.comparison('../run-000001')
+        with self.assertRaisesRegex(capture_review.CaptureUnavailable, 'declared pages'):
+            self.comparison(page='/unrelated/')
+        other_site = next(sid for sid in self.ids.values() if sid != self.sid)
+        with self.assertRaisesRegex(capture_review.CaptureUnavailable, 'unavailable'):
+            self.comparison(sid=other_site)
+        other_store = Store(self.root/'other-demo')
+        with patch.object(proposal_binding, 'DEMO_WORKSPACE', other_store.root):
+            # Even an exact copy of the site and proposal database cannot own the run.
+            other_store.db_path.write_bytes(self.store.db_path.read_bytes())
+            self.assertEqual(capture_review.available_runs(other_store, self.sid, self.selection), [])
+            with self.assertRaisesRegex(capture_review.CaptureUnavailable, 'unavailable'):
+                self.comparison(store=other_store)
+        with self.private_session():
+            self.assertEqual(capture_review.available_runs(self.store, self.sid, self.selection), [])
+            with self.assertRaisesRegex(capture_review.CaptureUnavailable, 'unavailable'):
+                self.comparison()
+        staged, = (control._root()/'run-000001').glob('proposed-capture-*')
+        raw = staged/'after-0-raw.html'
+        lstat = Path.lstat
+        for links, attributes in ((2, 0), (1, stat.FILE_ATTRIBUTE_REPARSE_POINT)):
+            alias = SimpleNamespace(st_mode=stat.S_IFREG, st_nlink=links, st_file_attributes=attributes)
+            with patch.object(Path, 'lstat', lambda path: alias if path == raw else lstat(path)):
+                self.assertIn('unsafe', self.comparison()['Staged'])
+
+    def test_comparison_ui_rerenders_with_docker_unavailable_without_writes(self):
+        self.finish_rehearsal()
+        registration_file = self.root/'migration-manifest.json'
+        self.record(registration_file, self.registration)
+        tracked = [self.store.db_path, registration_file, self.lock,
+                   *(p for p in control._root().rglob('*') if p.is_file())]
+        before = {p: sha256(p.read_bytes()).hexdigest() for p in tracked}
+        prefix = f'{self.sid}:local-title-captures:{self.aid}:{self.selection[1]}:'
+        with (patch.object(run, 'docker', side_effect=AssertionError('Comparison called Docker')) as docker,
+              patch.object(run, 'Backend', side_effect=AssertionError('Comparison called backend')) as backend,
+              patch('seo_agent.runner.Jobs.submit_check', side_effect=AssertionError('Comparison refreshed tracking')) as refresh):
+            def panel(workspace, sid, selection):
+                import streamlit as st
+                from pathlib import Path
+                from seo_agent.local_title_rehearsal_ui import _capture_comparison
+                from seo_agent.storage import Store
+                st.session_state.setdefault(f'{sid}:local-title-captures:{selection[0]}:{selection[1]}:open', True)
+                _capture_comparison(Store(Path(workspace), read_only=True), sid, selection)
+
+            app = AppTest.from_function(panel, args=(str(self.workspace), self.sid, self.selection)).run()
+            self.assertFalse(app.exception)
+            self.assertEqual(len(app.get('iframe')), 3)
+            app.selectbox(key=prefix+'page').select(PATHS[1]).run()
+            app.radio(key=prefix+'view').set_value('Staged').run()
+            self.assertFalse(app.exception)
+            frame, = app.get('iframe')
+            self.assertIn('Contact Us', frame.proto.srcdoc)
+            self.assertIn(SAVED_TITLE, frame.proto.srcdoc)
+            docker.assert_not_called()
+            backend.assert_not_called()
+            refresh.assert_not_called()
+        self.assertEqual(before, {p: sha256(p.read_bytes()).hexdigest() for p in tracked})
+        self.assertEqual(set(tracked[3:]), {p for p in control._root().rglob('*') if p.is_file()})
         self.assertEqual(self.backend.saves, 2)
 
     def test_malformed_elementor_data_displays_preflight_blocker(self):

@@ -73,8 +73,8 @@ def _record_fields(pairs):
     return value
 
 
-def load_registration(root):
-    """Read the activation record and verify every active file. No discovery or writes."""
+def read_registration(root):
+    """Read the registered identity and expected digests from the activation record."""
     checked_path(root, directory=True)
     if private_location(root) != root:
         raise RuntimeRegistrationError('Local rehearsal runtime path is not direct.')
@@ -103,6 +103,13 @@ def load_registration(root):
         valid = False
     if not valid:
         raise RuntimeRegistrationError('Local rehearsal registration is invalid or incompatible.')
+    return data
+
+
+def load_registration(root):
+    """Read the activation record and verify every active file. No discovery or writes."""
+    data = read_registration(root)
+    files = data['active_sha256']
     for name, expected in sorted(files.items()):
         if file_digest(root / name) != expected:
             raise RuntimeRegistrationError(f'Local rehearsal file changed since registration: {name}.')

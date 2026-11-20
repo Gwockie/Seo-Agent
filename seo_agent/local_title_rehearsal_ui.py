@@ -1,9 +1,11 @@
 """Proposal and Hosting & CMS controls for the opt-in disposable rehearsal."""
 import streamlit as st
 
-from tools.local_title_rehearsal import app_control, lifecycle, proposal_binding
+from tools.local_title_rehearsal import app_control, capture_review, lifecycle, proposal_binding
 from tools.local_title_rehearsal.runtime import PROJECT
-from tools.local_title_rehearsal.scope import CURRENT, HOME, PATHS, PROPOSED
+from tools.local_title_rehearsal.scope import BREADCRUMB, CONTACT_HEADING, CURRENT, HEADING, HOME, LITERAL_NAVIGATION, PATHS, PROPOSED
+
+from .previews import preview_frame, static_capture_document
 
 
 ACTIONS = (
@@ -158,6 +160,55 @@ def render(store, sid):
     _actions(status, store, sid)
 
 
+def _capture_panel(phase, capture, sections):
+    st.markdown(f'**{phase}**')
+    if isinstance(capture, str):
+        st.warning('Unavailable. ' + capture)
+        return
+    try:
+        title, observations, document = static_capture_document(capture.source, sections)
+    except ValueError:
+        st.warning('Unavailable. The captured HTML could not be rendered as a static page.')
+        return
+    st.caption('Captured ' + capture.checked + ' · ' + capture.verification)
+    st.text('Document title\n' + (title or 'Unavailable'))
+    for label, value in observations.items():
+        st.text(label + '\n' + value)
+    st.iframe(preview_frame(document), height=870, alt=f'{phase} static WordPress capture')
+
+
+@st.fragment
+def _capture_comparison(store, sid, selection):
+    key = f'{sid}:local-title-captures:{selection[0]}:{selection[1]}:'
+    panel = st.expander('Compare saved WordPress captures', key=key + 'open', on_change='rerun')
+    if not panel.open:
+        return
+    with panel:
+        try:
+            runs = capture_review.available_runs(store, sid, selection)
+            if not runs:
+                st.info('No retained runs with a verified workspace and proposal binding.')
+                return
+            labels = {item.name: f'{item.name} · {"Historical" if item.historical else "Current"} revision {item.revision}'
+                      for item in runs}
+            run_name = st.selectbox('Rehearsal run', list(reversed(labels)), format_func=labels.get, key=key + 'run')
+            page = st.selectbox('Captured local page', PATHS, key=key + 'page')
+            view = st.radio('Capture view', ('Side by side', *capture_review.PHASES), horizontal=True, key=key + 'view')
+            result = capture_review.load_comparison(store, sid, selection, run_name, page)
+        except capture_review.CaptureUnavailable as exc:
+            st.warning(str(exc))
+            return
+        st.text(HOME + page)
+        st.caption('Static view of captured local content. Site styling, images and interactive behavior are omitted. '
+                   'This view does not verify mobile behavior, the live site or production compatibility.')
+        sections = {'Page heading': HEADING, 'Breadcrumb': BREADCRUMB} if page == PATHS[0] else {'Page heading': CONTACT_HEADING}
+        sections.update({'Header navigation label': LITERAL_NAVIGATION[0], 'Footer navigation label': LITERAL_NAVIGATION[2]})
+        phases = capture_review.PHASES if view == 'Side by side' else (view,)
+        for phase, column in zip(phases, st.columns(len(phases))):
+            with column:
+                _capture_panel(phase, result[phase], sections)
+
+
 def render_proposal(store, sid, record):
     if not enabled(store, sid):
         return
@@ -165,6 +216,7 @@ def render_proposal(store, sid, record):
         return
     selection = (record['audit_id'], record['action_id'], record['revision'])
     with st.expander('Rehearse this proposal on local staging'):
+        _capture_comparison(store, sid, selection)
         status = app_control.inspect(store=store, sid=sid, selection=selection)
         st.caption('Apply uses the saved revision. Save form changes as a new revision first. Rehearsal evidence is for isolated Docker only.')
         if status.proposal_blocker:
